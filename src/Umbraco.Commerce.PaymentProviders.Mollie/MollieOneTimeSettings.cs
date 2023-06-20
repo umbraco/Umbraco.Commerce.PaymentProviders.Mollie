@@ -63,7 +63,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         public string Locale { get; set; }
 
         [PaymentProviderSetting(Name = "Payment Methods",
-            Description = "A comma separated list of payment methods to limit the payment method selection screen by. Can be 'applepay', 'bancontact', 'banktransfer', 'belfius', 'creditcard', 'directdebit', 'eps', 'giftcard', 'giropay', 'ideal', 'kbc', 'klarnapaylater', 'klarnasliceit', 'mybank', 'paypal', 'paysafecard', 'przelewy24', 'sofort' or 'voucher'.",
+            Description = "A comma separated list of payment methods to limit the payment method selection screen by. Can be 'applepay', 'bancontact', 'banktransfer', 'belfius', 'billie', 'creditcard', 'directdebit', 'eps', 'giftcard', 'giropay', 'ideal', 'in3', 'kbc', 'klarnapaylater', 'klarnapaynow', 'klarnasliceit', 'mybank', 'paypal', 'paysafecard', 'przelewy24', 'sofort' or 'voucher'.",
             IsAdvanced = true,
             SortOrder = 1000200)]
         public string PaymentMethods { get; set; }
