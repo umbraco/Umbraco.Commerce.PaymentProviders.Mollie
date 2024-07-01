@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Mollie.Api.Client;
 using Mollie.Api.Models.Order;
 using Mollie.Api.Models.Shipment;
@@ -22,7 +23,7 @@ using MolliePaymentStatus = Mollie.Api.Models.Payment.PaymentStatus;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
-    [PaymentProvider("mollie-onetime", "Mollie (One Time)", "Mollie payment provider for one time payments")]
+    [PaymentProvider("mollie-onetime")]
     public class MollieOneTimePaymentProvider : PaymentProviderBase<MollieOneTimeSettings>
     {
         private ILogger<MollieOneTimePaymentProvider> _logger;
@@ -328,15 +329,17 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             }
         }
 
-        public override async Task<CallbackResult> ProcessCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        public override async Task<CallbackResult> ProcessCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
         {
-            if (ctx.Request.RequestUri.Query.Contains("redirect"))
+            ArgumentNullException.ThrowIfNull(context);
+
+            if (context.HttpContext.Request.Query.ContainsKey("redirect"))
             {
-                return await ProcessRedirectCallbackAsync(ctx);
+                return await ProcessRedirectCallbackAsync(context, CancellationToken.None).ConfigureAwait(false);
             }
             else
             {
-                return await ProcessWebhookCallbackAsync(ctx);
+                return await ProcessWebhookCallbackAsync(context, CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -382,7 +385,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         private async Task<CallbackResult> ProcessWebhookCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
             // Validate the ID from the webhook matches the orders mollieOrderId property
-            System.Collections.Specialized.NameValueCollection formData = await ctx.Request.Content.ReadAsFormDataAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            IFormCollection formData = await ctx.HttpContext.Request.ReadFormAsync(cancellationToken).ConfigureAwait(false);
             string id = formData["id"];
 
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
