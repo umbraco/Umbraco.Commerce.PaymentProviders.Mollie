@@ -1,5 +1,5 @@
 export default {
-    paymentProviders: {
+    ucPaymentProviders: {
         'mollieOnetimeLabel': 'Mollie (One Time)',
         'mollieOnetimeDescription': 'Mollie payment provider for one time payments',
         'mollieOnetimeSettingsContinueUrlLabel': 'Continue URL',
