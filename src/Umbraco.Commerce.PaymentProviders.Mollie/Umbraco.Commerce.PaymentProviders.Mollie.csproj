@@ -4,6 +4,7 @@
       <Title>Umbraco Commerce Mollie Payment Provider</Title>
       <Description>Mollie payment provider for Umbraco Commerce</Description>
       <StaticWebAssetBasePath>App_Plugins/UmbracoCommerceMolliePaymentProvider</StaticWebAssetBasePath>
+      <NoWarn>CA2007</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
