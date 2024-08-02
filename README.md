@@ -2,4 +2,5 @@
 
 Mollie Payment Provider for Umbraco Commerce
 
-Documentation: https://docs.umbraco.com/umbraco-commerce-payment-providers/mollie/mollie
+- Documentation: https://docs.umbraco.com/umbraco-commerce-payment-providers/mollie/mollie
+- Release notes: https://github.com/umbraco/Umbraco.Commerce.PaymentProviders.Mollie/releases
