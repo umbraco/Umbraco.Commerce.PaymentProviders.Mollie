@@ -32,7 +32,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             Name = "Billing Address City Property Alias",
             Description = "The order property alias containing the city of the billing address",
             SortOrder = 600)]
-        public string BillingAddressCityPropertyAlias { get; set; } = "billingAddressLine1";
+        public string BillingAddressCityPropertyAlias { get; set; }
 
         [PaymentProviderSetting(
             Name = "Billing Address State Property Alias",
