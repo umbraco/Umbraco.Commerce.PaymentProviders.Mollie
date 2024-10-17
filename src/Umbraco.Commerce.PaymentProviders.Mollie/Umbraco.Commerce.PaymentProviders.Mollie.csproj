@@ -3,11 +3,11 @@
     <PropertyGroup>
       <Title>Umbraco Commerce Mollie Payment Provider</Title>
       <Description>Mollie payment provider for Umbraco Commerce</Description>
+      <NoWarn>CA2007</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
         <PackageReference Include="Mollie.Api" />
-        <PackageReference Include="Umbraco.Commerce.Core" />
         <PackageReference Include="Microsoft.AspNet.WebApi.Client" />
     </ItemGroup>
 

@@ -19,6 +19,7 @@ using MollieOrderLineStatus = Mollie.Api.Models.Order.OrderLineStatus;
 using MollieOrderLineType = Mollie.Api.Models.Order.OrderLineDetailsType;
 using MollieOrderStatus = Mollie.Api.Models.Order.OrderStatus;
 using MolliePaymentStatus = Mollie.Api.Models.Payment.PaymentStatus;
+using PaymentStatus = Umbraco.Commerce.Core.Models.PaymentStatus;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
@@ -325,10 +326,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 return new PaymentFormResult
                 {
                     Form = new PaymentForm(mollieOrderResult.Links.Checkout.Href, PaymentFormMethod.Get),
-                    MetaData = new Dictionary<string, string>()
-                {
-                    { "mollieOrderId", mollieOrderResult.Id }
-                }
+                    MetaData = new Dictionary<string, string>
+                    {
+                        { "mollieOrderId", mollieOrderResult.Id },
+                    },
                 };
             }
         }
@@ -357,28 +358,41 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             using (var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
                 OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true);
-
-                if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                if (mollieOrder != null)
                 {
-                    result.HttpResponse.Headers.Location = new Uri(ctx.Urls.CancelUrl);
-                }
-                else
-                {
-                    // If the order is pending, Mollie won't sent a webhook notification so
-                    // we check for this on the return URL and if the order is pending, finalize it
-                    // and set it's status to pending before progressing to the confirmation page
-                    if (mollieOrder.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    if (mollieOrder.Embedded.Payments.Last()?.Status == MolliePaymentStatus.Failed)
                     {
-                        result.TransactionInfo = new TransactionInfo
+                        // Mollie redirects user here when the payment failed
+                        result.HttpResponse.Headers.Location = new Uri(ctx.Urls.ErrorUrl);
+                    }
+                    else if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                    {
+                        result.HttpResponse.Headers.Location = new Uri(ctx.Urls.CancelUrl);
+                    }
+                    else
+                    {
+                        // If the order is pending, Mollie won't sent a webhook notification so
+                        // we check for this on the return URL and if the order is pending, finalize it
+                        // and set it's status to pending before progressing to the confirmation page
+                        if (mollieOrder.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
                         {
-                            AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
-                            TransactionFee = 0m,
-                            TransactionId = mollieOrderId,
-                            PaymentStatus = PaymentStatus.PendingExternalSystem
-                        };
+                            result.TransactionInfo = new TransactionInfo
+                            {
+                                AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
+                                TransactionFee = 0m,
+                                TransactionId = mollieOrderId,
+                                PaymentStatus = PaymentStatus.PendingExternalSystem
+                            };
+                        }
+
+                        result.HttpResponse.Headers.Location = new Uri(ctx.Urls.ContinueUrl);
                     }
 
-                    result.HttpResponse.Headers.Location = new Uri(ctx.Urls.ContinueUrl);
+                    result.MetaData = new Dictionary<string, string>()
+                    {
+                        { "mollieOrderId", mollieOrder.Id },
+                        { "molliePaymentMethod", mollieOrder.Method },
+                    };
                 }
             }
 
