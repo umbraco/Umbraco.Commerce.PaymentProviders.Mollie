@@ -8,6 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <PackageReference Include="Microsoft.AspNetCore.WebUtilities" />
         <PackageReference Include="Mollie.Api" />
         <PackageReference Include="Umbraco.Commerce.Core" />
         <PackageReference Include="Microsoft.AspNet.WebApi.Client" />
