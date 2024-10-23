@@ -5,8 +5,11 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Primitives;
 using Mollie.Api.Client;
 using Mollie.Api.Models.Order;
+using Mollie.Api.Models.Payment.Response;
 using Mollie.Api.Models.Shipment;
 using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
@@ -26,7 +29,8 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
     [PaymentProvider("mollie-onetime", "Mollie (One Time)", "Mollie payment provider for one time payments")]
     public class MollieOneTimePaymentProvider : PaymentProviderBase<MollieOneTimeSettings>
     {
-        private ILogger<MollieOneTimePaymentProvider> _logger;
+        private readonly ILogger<MollieOneTimePaymentProvider> _logger;
+        private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
         public MollieOneTimePaymentProvider(
             UmbracoCommerceContext ctx,
@@ -51,7 +55,6 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.CancelUrl.MustNotBeNull("settings.CancelUrl");
-
             return ctx.Settings.CancelUrl;
         }
 
@@ -59,6 +62,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.ErrorUrl.MustNotBeNull("settings.ErrorUrl");
+
+            Dictionary<string, StringValues> requestQueries = QueryHelpers.ParseQuery(ctx.Request.RequestUri.Query);
+            if (requestQueries.TryGetValue(MollieFailureReasonQueryParam, out StringValues mollieFailureReason))
+            {
+                // pass the failure reason to the error url
+                string errorUrlWithFailureReason = QueryHelpers.AddQueryString(ctx.Settings.ErrorUrl, MollieFailureReasonQueryParam, mollieFailureReason);
+                return errorUrlWithFailureReason;
+            }
 
             return ctx.Settings.ErrorUrl;
         }
@@ -360,10 +371,12 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true);
                 if (mollieOrder != null)
                 {
-                    if (mollieOrder.Embedded.Payments.Last()?.Status == MolliePaymentStatus.Failed)
+                    var lastPayment = mollieOrder.Embedded.Payments.Last() as CreditCardPaymentResponse;
+                    if (lastPayment?.Status == MolliePaymentStatus.Failed)
                     {
                         // Mollie redirects user here when the payment failed
-                        result.HttpResponse.Headers.Location = new Uri(ctx.Urls.ErrorUrl);
+                        var errorUri = new Uri($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={lastPayment.Details.FailureReason}");
+                        result.HttpResponse.Headers.Location = errorUri;
                     }
                     else if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
                     {

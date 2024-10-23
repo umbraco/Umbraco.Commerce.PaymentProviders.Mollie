@@ -480,3 +480,4 @@ $RECYCLE.BIN/
 ## Umbraco Commerce specific
 ##
 /src/Umbraco.Commerce.PaymentProviders.Mollie/packages.lock.json
+/Umbraco.Commerce.PaymentProviders.Mollie.Tests/packages.lock.json
