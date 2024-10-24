@@ -5,8 +5,11 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Primitives;
 using Mollie.Api.Client;
 using Mollie.Api.Models.Order;
+using Mollie.Api.Models.Payment.Response;
 using Mollie.Api.Models.Shipment;
 using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
@@ -19,13 +22,15 @@ using MollieOrderLineStatus = Mollie.Api.Models.Order.OrderLineStatus;
 using MollieOrderLineType = Mollie.Api.Models.Order.OrderLineDetailsType;
 using MollieOrderStatus = Mollie.Api.Models.Order.OrderStatus;
 using MolliePaymentStatus = Mollie.Api.Models.Payment.PaymentStatus;
+using PaymentStatus = Umbraco.Commerce.Core.Models.PaymentStatus;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
     [PaymentProvider("mollie-onetime", "Mollie (One Time)", "Mollie payment provider for one time payments")]
     public class MollieOneTimePaymentProvider : PaymentProviderBase<MollieOneTimeSettings>
     {
-        private ILogger<MollieOneTimePaymentProvider> _logger;
+        private readonly ILogger<MollieOneTimePaymentProvider> _logger;
+        private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
         public MollieOneTimePaymentProvider(
             UmbracoCommerceContext ctx,
@@ -41,11 +46,15 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         public override bool CanCapturePayments => true;
         public override bool FinalizeAtContinueUrl => false;
 
+        public override IEnumerable<TransactionMetaDataDefinition> TransactionMetaDataDefinitions => new[]{
+            new TransactionMetaDataDefinition("mollieOrderId", "Mollie Order Id"),
+            new TransactionMetaDataDefinition("molliePaymentMethod", "Mollie Payment Method"),
+        };
+
         public override string GetCancelUrl(PaymentProviderContext<MollieOneTimeSettings> ctx)
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.CancelUrl.MustNotBeNull("settings.CancelUrl");
-
             return ctx.Settings.CancelUrl;
         }
 
@@ -53,6 +62,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.ErrorUrl.MustNotBeNull("settings.ErrorUrl");
+
+            Dictionary<string, StringValues> requestQueries = QueryHelpers.ParseQuery(ctx.Request.RequestUri.Query);
+            if (requestQueries.TryGetValue(MollieFailureReasonQueryParam, out StringValues mollieFailureReason))
+            {
+                // pass the failure reason to the error url
+                string errorUrlWithFailureReason = QueryHelpers.AddQueryString(ctx.Settings.ErrorUrl, MollieFailureReasonQueryParam, mollieFailureReason);
+                return errorUrlWithFailureReason;
+            }
 
             return ctx.Settings.ErrorUrl;
         }
@@ -315,28 +332,28 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     }
                 }
 
-                OrderResponse mollieOrderResult = await mollieOrderClient.CreateOrderAsync(mollieOrderRequest).ConfigureAwait(false);
+                OrderResponse mollieOrderResult = await mollieOrderClient.CreateOrderAsync(mollieOrderRequest);
 
                 return new PaymentFormResult
                 {
                     Form = new PaymentForm(mollieOrderResult.Links.Checkout.Href, PaymentFormMethod.Get),
-                    MetaData = new Dictionary<string, string>()
-                {
-                    { "mollieOrderId", mollieOrderResult.Id }
-                }
+                    MetaData = new Dictionary<string, string>
+                    {
+                        { "mollieOrderId", mollieOrderResult.Id },
+                    },
                 };
             }
         }
 
         public override async Task<CallbackResult> ProcessCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
-            if (ctx.Request.RequestUri.Query.Contains("redirect"))
+            if (ctx.Request.RequestUri.Query.Contains("redirect", StringComparison.OrdinalIgnoreCase))
             {
-                return await ProcessRedirectCallbackAsync(ctx);
+                return await ProcessRedirectCallbackAsync(ctx, cancellationToken);
             }
             else
             {
-                return await ProcessWebhookCallbackAsync(ctx);
+                return await ProcessWebhookCallbackAsync(ctx, cancellationToken);
             }
         }
 
@@ -348,31 +365,47 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
 
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
+            _logger.Info($"ProcessRedirectCallbackAsync; mollieOrderId: '{mollieOrderId}'; ctx.Order.OrderNumber: '{ctx.Order.OrderNumber}'.");
             using (var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
-                OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true).ConfigureAwait(false);
-
-                if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true);
+                if (mollieOrder != null)
                 {
-                    result.HttpResponse.Headers.Location = new Uri(ctx.Urls.CancelUrl);
-                }
-                else
-                {
-                    // If the order is pending, Mollie won't sent a webhook notification so
-                    // we check for this on the return URL and if the order is pending, finalize it
-                    // and set it's status to pending before progressing to the confirmation page
-                    if (mollieOrder.Status.Equals("pending", StringComparison.InvariantCultureIgnoreCase))
+                    var lastPayment = mollieOrder.Embedded.Payments.Last() as CreditCardPaymentResponse;
+                    if (lastPayment?.Status == MolliePaymentStatus.Failed)
                     {
-                        result.TransactionInfo = new TransactionInfo
+                        // Mollie redirects user here when the payment failed
+                        var errorUri = new Uri($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={lastPayment.Details.FailureReason}");
+                        result.HttpResponse.Headers.Location = errorUri;
+                    }
+                    else if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                    {
+                        result.HttpResponse.Headers.Location = new Uri(ctx.Urls.CancelUrl);
+                    }
+                    else
+                    {
+                        // If the order is pending, Mollie won't sent a webhook notification so
+                        // we check for this on the return URL and if the order is pending, finalize it
+                        // and set it's status to pending before progressing to the confirmation page
+                        if (mollieOrder.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
                         {
-                            AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
-                            TransactionFee = 0m,
-                            TransactionId = mollieOrderId,
-                            PaymentStatus = PaymentStatus.PendingExternalSystem
-                        };
+                            result.TransactionInfo = new TransactionInfo
+                            {
+                                AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
+                                TransactionFee = 0m,
+                                TransactionId = mollieOrderId,
+                                PaymentStatus = PaymentStatus.PendingExternalSystem
+                            };
+                        }
+
+                        result.HttpResponse.Headers.Location = new Uri(ctx.Urls.ContinueUrl);
                     }
 
-                    result.HttpResponse.Headers.Location = new Uri(ctx.Urls.ContinueUrl);
+                    result.MetaData = new Dictionary<string, string>()
+                    {
+                        { "mollieOrderId", mollieOrder.Id },
+                        { "molliePaymentMethod", mollieOrder.Method },
+                    };
                 }
             }
 
@@ -382,18 +415,19 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         private async Task<CallbackResult> ProcessWebhookCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
             // Validate the ID from the webhook matches the orders mollieOrderId property
-            System.Collections.Specialized.NameValueCollection formData = await ctx.Request.Content.ReadAsFormDataAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            System.Collections.Specialized.NameValueCollection formData = await ctx.Request.Content.ReadAsFormDataAsync(cancellationToken: cancellationToken);
             string id = formData["id"];
 
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
+            _logger.Info($"ProcessWebhookCallbackAsync; orderIdFromCallback: '{id}'; mollieOrderId: '{mollieOrderId}'; ctx.Order.OrderNumber: '{ctx.Order.OrderNumber}'.");
             if (id != mollieOrderId)
             {
                 return CallbackResult.Ok();
             }
 
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true).ConfigureAwait(false);
-            PaymentStatus paymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken).ConfigureAwait(false);
+            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
+            PaymentStatus paymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken);
 
             // Mollie sends cancelled notifications for unfinalized orders so we need to ensure that
             // we only cancel orders that are authorized
@@ -421,14 +455,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true).ConfigureAwait(false);
+            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken).ConfigureAwait(false)
+                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken)
                 }
             };
         }
@@ -438,16 +472,16 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
 
-            await mollieOrderClient.CancelOrderAsync(mollieOrderId).ConfigureAwait(false);
+            await mollieOrderClient.CancelOrderAsync(mollieOrderId);
 
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true).ConfigureAwait(false);
+            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken).ConfigureAwait(false)
+                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken)
                 }
             };
         }
@@ -457,16 +491,16 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
 
-            await mollieOrderClient.CreateOrderRefundAsync(mollieOrderId, new OrderRefundRequest { Lines = new List<OrderLineDetails>() }).ConfigureAwait(false);
+            await mollieOrderClient.CreateOrderRefundAsync(mollieOrderId, new OrderRefundRequest { Lines = new List<OrderLineDetails>() });
 
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true).ConfigureAwait(false);
+            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken).ConfigureAwait(false)
+                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken)
                 }
             };
         }
@@ -477,16 +511,16 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             using var mollieShipmentClient = new ShipmentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
 
-            await mollieShipmentClient.CreateShipmentAsync(mollieOrderId, new ShipmentRequest()).ConfigureAwait(false);
+            await mollieShipmentClient.CreateShipmentAsync(mollieOrderId, new ShipmentRequest());
 
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true).ConfigureAwait(false);
+            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken).ConfigureAwait(false)
+                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken)
                 }
             };
         }
@@ -508,7 +542,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             // If there are any open refunds that are not in a failed status
             // we'll just assume to the order is refunded untill we know otherwise
-            global::Mollie.Api.Models.List.ListResponse<global::Mollie.Api.Models.Refund.RefundResponse> refunds = await orderClient.GetOrderRefundListAsync(order.Id).ConfigureAwait(false);
+            global::Mollie.Api.Models.List.ListResponse<global::Mollie.Api.Models.Refund.RefundResponse> refunds = await orderClient.GetOrderRefundListAsync(order.Id);
             if (refunds?.Items != null && refunds.Items.Any(x => x.Status != "failed"))
             {
                 return PaymentStatus.Refunded;
