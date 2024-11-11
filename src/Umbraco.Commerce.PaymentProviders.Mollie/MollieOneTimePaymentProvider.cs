@@ -8,17 +8,19 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Mollie.Api.Client;
 using Mollie.Api.Models.Order;
-using Mollie.Api.Models.Shipment;
+using Mollie.Api.Models.Order.Request;
+using Mollie.Api.Models.Order.Response;
+using Mollie.Api.Models.Shipment.Request;
 using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
 using Umbraco.Commerce.Core.Models;
 using Umbraco.Commerce.Core.PaymentProviders;
 using Umbraco.Commerce.Extensions;
-using MollieAmmount = Mollie.Api.Models.Amount;
+using MollieAmount = Mollie.Api.Models.Amount;
 using MollieLocale = Mollie.Api.Models.Payment.Locale;
-using MollieOrderLineStatus = Mollie.Api.Models.Order.OrderLineStatus;
-using MollieOrderLineType = Mollie.Api.Models.Order.OrderLineDetailsType;
-using MollieOrderStatus = Mollie.Api.Models.Order.OrderStatus;
+using MollieOrderLineType = Mollie.Api.Models.Order.Request.OrderLineDetailsType;
+using MollieOrderLineStatus = Mollie.Api.Models.Order.Response.OrderLineStatus;
+using MollieOrderStatus = Mollie.Api.Models.Order.Response.OrderStatus;
 using MolliePaymentStatus = Mollie.Api.Models.Payment.PaymentStatus;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
@@ -82,11 +84,11 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             }
 
             // Get entities
-            CurrencyReadOnly currency = Context.Services.CurrencyService.GetCurrency(ctx.Order.CurrencyId);
-            CountryReadOnly country = Context.Services.CountryService.GetCountry(ctx.Order.PaymentInfo.CountryId.Value);
-            PaymentMethodReadOnly paymentMethod = Context.Services.PaymentMethodService.GetPaymentMethod(ctx.Order.PaymentInfo.PaymentMethodId.Value);
+            CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(ctx.Order.CurrencyId);
+            CountryReadOnly country = await Context.Services.CountryService.GetCountryAsync(ctx.Order.PaymentInfo!.CountryId!.Value!);
+            PaymentMethodReadOnly paymentMethod = await Context.Services.PaymentMethodService.GetPaymentMethodAsync(ctx.Order.PaymentInfo!.PaymentMethodId!.Value!);
             ShippingMethodReadOnly shippingMethod = ctx.Order.ShippingInfo.ShippingMethodId.HasValue
-                ? Context.Services.ShippingMethodService.GetShippingMethod(ctx.Order.ShippingInfo.ShippingMethodId.Value)
+                ? await Context.Services.ShippingMethodService.GetShippingMethodAsync(ctx.Order.ShippingInfo.ShippingMethodId.Value)
                 : null;
 
             // Adjustments helper
@@ -103,10 +105,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Name = (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(),
                         Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
                         Quantity = 1,
-                        UnitPrice = new MollieAmmount(currency.Code, adjustment.Price.WithTax),
+                        UnitPrice = new MollieAmount(currency.Code, adjustment.Price.WithTax),
                         VatRate = (taxRate * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmmount(currency.Code, adjustment.Price.Tax),
-                        TotalAmount = new MollieAmmount(currency.Code, adjustment.Price.WithTax)
+                        VatAmount = new MollieAmount(currency.Code, adjustment.Price.Tax),
+                        TotalAmount = new MollieAmount(currency.Code, adjustment.Price.WithTax)
                     });
                 }
             });
@@ -152,15 +154,15 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Sku = orderLine.Sku,
                         Name = orderLine.Name,
                         Quantity = (int)orderLine.Quantity,
-                        UnitPrice = new MollieAmmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
+                        UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
                         VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmmount(currency.Code, orderLine.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmmount(currency.Code, orderLine.TotalPrice.Value.WithTax)
+                        VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.Tax),
+                        TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.WithTax)
                     };
 
                     if (orderLine.TotalPrice.TotalAdjustment.WithTax < 0)
                     {
-                        mollieOrderLine.DiscountAmount = new MollieAmmount(currency.Code, orderLine.TotalPrice.TotalAdjustment.WithTax * -1);
+                        mollieOrderLine.DiscountAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.TotalAdjustment.WithTax * -1);
                     }
                     else if (orderLine.TotalPrice.TotalAdjustment.WithTax > 0)
                     {
@@ -195,15 +197,15 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Name = paymentMethod.Name + " Fee",
                         Type = MollieOrderLineType.Surcharge,
                         Quantity = 1,
-                        UnitPrice = new MollieAmmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
+                        UnitPrice = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
                         VatRate = (ctx.Order.PaymentInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.WithTax)
+                        VatAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.Tax),
+                        TotalAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.WithTax)
                     };
 
                     if (ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax < 0)
                     {
-                        paymentOrderLine.DiscountAmount = new MollieAmmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax * -1);
+                        paymentOrderLine.DiscountAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax * -1);
                     }
                     else if (ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax > 0)
                     {
@@ -222,15 +224,15 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Name = shippingMethod.Name + " Fee",
                         Type = MollieOrderLineType.ShippingFee,
                         Quantity = 1,
-                        UnitPrice = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
+                        UnitPrice = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
                         VatRate = (ctx.Order.ShippingInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax)
+                        VatAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
+                        TotalAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax)
                     };
 
                     if (ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax < 0)
                     {
-                        shippingOrderLine.DiscountAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax * -1);
+                        shippingOrderLine.DiscountAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax * -1);
                     }
                     else if (ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax > 0)
                     {
@@ -258,10 +260,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                             Name = "Gift Card - " + giftCard.GiftCardCode,
                             Type = MollieOrderLineType.GiftCard,
                             Quantity = 1,
-                            UnitPrice = new MollieAmmount(currency.Code, giftCard.Amount.Value),
+                            UnitPrice = new MollieAmount(currency.Code, giftCard.Amount.Value),
                             VatRate = "0.00",
-                            VatAmount = new MollieAmmount(currency.Code, 0m),
-                            TotalAmount = new MollieAmmount(currency.Code, giftCard.Amount.Value)
+                            VatAmount = new MollieAmount(currency.Code, 0m),
+                            TotalAmount = new MollieAmount(currency.Code, giftCard.Amount.Value)
                         });
                     }
                 }
@@ -280,17 +282,17 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                             Name = "Transaction " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name,
                             Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
                             Quantity = 1,
-                            UnitPrice = new MollieAmmount(currency.Code, adjustment.Amount.Value),
+                            UnitPrice = new MollieAmount(currency.Code, adjustment.Amount.Value),
                             VatRate = "0.00",
-                            VatAmount = new MollieAmmount(currency.Code, 0m),
-                            TotalAmount = new MollieAmmount(currency.Code, adjustment.Amount.Value)
+                            VatAmount = new MollieAmount(currency.Code, 0m),
+                            TotalAmount = new MollieAmount(currency.Code, adjustment.Amount.Value)
                         });
                     }
                 }
 
                 var mollieOrderRequest = new OrderRequest
                 {
-                    Amount = new MollieAmmount(currency.Code.ToUpperInvariant(), ctx.Order.TransactionAmount.Value),
+                    Amount = new MollieAmount(currency.Code.ToUpperInvariant(), ctx.Order.TransactionAmount.Value),
                     OrderNumber = ctx.Order.OrderNumber,
                     Lines = mollieOrderLines,
                     Metadata = ctx.Order.GenerateOrderReference(),
@@ -399,7 +401,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
             OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
-            PaymentStatus paymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken);
+            PaymentStatus paymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken);
 
             // Mollie sends cancelled notifications for unfinalized orders so we need to ensure that
             // we only cancel orders that are authorized
@@ -434,7 +436,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken),
+                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
                 }
             };
         }
@@ -453,7 +455,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken),
+                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
                 }
             };
         }
@@ -461,9 +463,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         public override async Task<ApiResult> RefundPaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
             PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
+            using var mollieRefundClient = new RefundClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
             using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
 
-            await mollieOrderClient.CreateOrderRefundAsync(mollieOrderId, new OrderRefundRequest { Lines = new List<OrderLineDetails>() });
+            await mollieRefundClient.CreateOrderRefundAsync(mollieOrderId, new OrderRefundRequest { Lines = new List<OrderLineDetails>() });
 
             OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
 
@@ -472,7 +475,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken),
+                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
                 }
             };
         }
@@ -492,12 +495,12 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(mollieOrderClient, mollieOrder, cancellationToken),
+                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
                 }
             };
         }
 
-        private static async Task<PaymentStatus> GetPaymentStatusAsync(OrderClient orderClient, OrderResponse order, CancellationToken cancellationToken = default)
+        private static async Task<PaymentStatus> GetPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, OrderResponse order, CancellationToken cancellationToken = default)
         {
             // The order is refunded if the total refunded amount is
             // greater than or equal to the original amount of the order
@@ -514,7 +517,8 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             // If there are any open refunds that are not in a failed status
             // we'll just assume to the order is refunded untill we know otherwise
-            global::Mollie.Api.Models.List.ListResponse<global::Mollie.Api.Models.Refund.RefundResponse> refunds = await orderClient.GetOrderRefundListAsync(order.Id);
+            using var mollieRefundClient = new RefundClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            global::Mollie.Api.Models.List.Response.ListResponse<global::Mollie.Api.Models.Refund.Response.RefundResponse> refunds = await mollieRefundClient.GetOrderRefundListAsync(order.Id);
             if (refunds?.Items != null && refunds.Items.Any(x => x.Status != MolliePaymentFailed))
             {
                 return PaymentStatus.Refunded;

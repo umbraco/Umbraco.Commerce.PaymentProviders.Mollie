@@ -10,7 +10,6 @@
     <ItemGroup>
         <PackageReference Include="Mollie.Api" />
         <PackageReference Include="Umbraco.Commerce.Core" />
-        <PackageReference Include="Microsoft.AspNet.WebApi.Client" />
     </ItemGroup>
 
 </Project>
