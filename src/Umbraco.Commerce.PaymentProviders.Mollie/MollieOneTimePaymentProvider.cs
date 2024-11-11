@@ -517,11 +517,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             // If there are any open refunds that are not in a failed status
             // we'll just assume to the order is refunded untill we know otherwise
-            using var mollieRefundClient = new RefundClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            global::Mollie.Api.Models.List.Response.ListResponse<global::Mollie.Api.Models.Refund.Response.RefundResponse> refunds = await mollieRefundClient.GetOrderRefundListAsync(order.Id);
-            if (refunds?.Items != null && refunds.Items.Any(x => x.Status != MolliePaymentFailed))
+            using (var mollieRefundClient = new RefundClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
-                return PaymentStatus.Refunded;
+                global::Mollie.Api.Models.List.Response.ListResponse<global::Mollie.Api.Models.Refund.Response.RefundResponse> refunds = await mollieRefundClient.GetOrderRefundListAsync(order.Id);
+                if (refunds.Items.Any(x => x.Status != MolliePaymentFailed))
+                {
+                    return PaymentStatus.Refunded;
+                }
             }
 
             // If the order is in a shipping status, at least one of the order lines
