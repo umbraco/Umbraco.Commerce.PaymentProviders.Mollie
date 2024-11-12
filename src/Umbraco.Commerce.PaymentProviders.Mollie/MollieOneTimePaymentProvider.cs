@@ -12,6 +12,7 @@ using Mollie.Api.Client;
 using Mollie.Api.Models.Order;
 using Mollie.Api.Models.Order.Request;
 using Mollie.Api.Models.Order.Response;
+using Mollie.Api.Models.Payment.Response.PaymentSpecificParameters;
 using Mollie.Api.Models.Shipment.Request;
 using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
@@ -365,14 +366,15 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true);
                 if (mollieOrder != null)
                 {
-                    var lastPayment = mollieOrder.Embedded.Payments.Last() as CreditCardPaymentResponse;
+                    var payments = (mollieOrder.Embedded?.Payments ?? []).ToList();
+                    var lastPayment = payments.Last() as CreditCardPaymentResponse;
                     if (lastPayment?.Status == MolliePaymentStatus.Failed)
                     {
                         // Mollie redirects user here when the payment failed
-                        result.ActionResult = new RedirectResult($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={lastPayment.Details.FailureReason}", false);
+                        result.ActionResult = new RedirectResult($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={lastPayment.Details?.FailureReason}", false);
 
                     }
-                    else if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                    else if (payments.All(x => x.Status == MolliePaymentStatus.Canceled))
                     {
                         result.ActionResult = new RedirectResult(ctx.Urls.CancelUrl, false);
                     }
