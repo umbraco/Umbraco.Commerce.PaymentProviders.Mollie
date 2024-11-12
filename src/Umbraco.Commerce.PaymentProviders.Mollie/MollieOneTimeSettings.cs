@@ -22,7 +22,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
         [PaymentProviderSetting(
             SortOrder = 600)]
-        public string BillingAddressCityPropertyAlias { get; set; } = "billingAddressLine1";
+        public string BillingAddressCityPropertyAlias { get; set; }
 
         [PaymentProviderSetting(
             SortOrder = 700)]

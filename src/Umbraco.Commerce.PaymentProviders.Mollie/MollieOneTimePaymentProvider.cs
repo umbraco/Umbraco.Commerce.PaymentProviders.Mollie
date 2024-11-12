@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Primitives;
 using Mollie.Api.Client;
 using Mollie.Api.Models.Order;
 using Mollie.Api.Models.Order.Request;
@@ -30,6 +32,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
     {
         private const string MolliePaymentFailed = "failed";
         private ILogger<MollieOneTimePaymentProvider> _logger;
+        private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
         public MollieOneTimePaymentProvider(
             UmbracoCommerceContext ctx,
@@ -49,7 +52,6 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.CancelUrl.MustNotBeNull("settings.CancelUrl");
-
             return ctx.Settings.CancelUrl;
         }
 
@@ -57,6 +59,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.ErrorUrl.MustNotBeNull("settings.ErrorUrl");
+
+            if (ctx.HttpContext.Request.Query.TryGetValue(MollieFailureReasonQueryParam, out StringValues mollieFailureReason))
+            {
+                // pass the failure reason to the error url
+                string errorUrlWithFailureReason = QueryHelpers.AddQueryString(ctx.Settings.ErrorUrl, MollieFailureReasonQueryParam, mollieFailureReason);
+                return errorUrlWithFailureReason;
+            }
 
             return ctx.Settings.ErrorUrl;
         }
@@ -354,33 +363,37 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             using (var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
                 OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true);
-
-                if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                if (mollieOrder != null)
                 {
-                    result.ActionResult = new RedirectResult(ctx.Urls.CancelUrl, false);
-                }
-                else if (mollieOrder.Embedded.Payments.Any()
-                    && mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentFailed))
-                {
-                    result.ActionResult = new RedirectResult(ctx.Urls.ErrorUrl, false);
-                }
-                else
-                {
-                    // If the order is pending, Mollie won't sent a webhook notification so
-                    // we check for this on the return URL and if the order is pending, finalize it
-                    // and set it's status to pending before progressing to the confirmation page
-                    if (mollieOrder.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    var lastPayment = mollieOrder.Embedded.Payments.Last() as CreditCardPaymentResponse;
+                    if (lastPayment?.Status == MolliePaymentStatus.Failed)
                     {
-                        result.TransactionInfo = new TransactionInfo
-                        {
-                            AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
-                            TransactionFee = 0m,
-                            TransactionId = mollieOrderId,
-                            PaymentStatus = PaymentStatus.PendingExternalSystem,
-                        };
-                    }
+                        // Mollie redirects user here when the payment failed
+                        result.ActionResult = new RedirectResult($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={lastPayment.Details.FailureReason}", false);
 
-                    result.ActionResult = new RedirectResult(ctx.Urls.ContinueUrl, false);
+                    }
+                    else if (mollieOrder.Embedded.Payments.All(x => x.Status == MolliePaymentStatus.Canceled))
+                    {
+                        result.ActionResult = new RedirectResult(ctx.Urls.CancelUrl, false);
+                    }
+                    else
+                    {
+                        // If the order is pending, Mollie won't sent a webhook notification so
+                        // we check for this on the return URL and if the order is pending, finalize it
+                        // and set it's status to pending before progressing to the confirmation page
+                        if (mollieOrder.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.TransactionInfo = new TransactionInfo
+                            {
+                                AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
+                                TransactionFee = 0m,
+                                TransactionId = mollieOrderId,
+                                PaymentStatus = PaymentStatus.PendingExternalSystem,
+                            };
+                        }
+
+                        result.ActionResult = new RedirectResult(ctx.Urls.ContinueUrl, false);
+                    }
                 }
             }
 
