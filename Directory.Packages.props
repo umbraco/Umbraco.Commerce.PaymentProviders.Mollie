@@ -12,6 +12,6 @@
   <ItemGroup>
     <PackageVersion Include="Mollie.Api" Version="[4.4.1, 5)" />
     <PackageVersion Include="Umbraco.Commerce.Core" Version="[15.0.0-rc1, 16)" />
-    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="[9.0.0-rc.2.24474.3, 10)" />
+    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="[9.0.0, 10)" />
   </ItemGroup>
 </Project>
