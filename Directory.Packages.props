@@ -3,16 +3,15 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <GlobalPackageReference Include="Microsoft.SourceLink.GitHub" Version="[8.0.0, 9)" />
-    <GlobalPackageReference Include="Nerdbank.GitVersioning" Version="[3.5.119, 4)" />
-    <GlobalPackageReference Include="StyleCop.Analyzers" Version="[1.2.0-beta.435, 2)" />
-    <GlobalPackageReference Include="Umbraco.Code" Version="[2.1.0, 3)" />
-    <GlobalPackageReference Include="Umbraco.GitVersioning.Extensions" Version="[0.2.0, 1)" />
+    <GlobalPackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" />
+    <GlobalPackageReference Include="Nerdbank.GitVersioning" Version="3.6.133" />
+    <GlobalPackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.435" />
+    <GlobalPackageReference Include="Umbraco.Code" Version="2.2.0" />
+    <GlobalPackageReference Include="Umbraco.GitVersioning.Extensions" Version="0.2.0" />
   </ItemGroup>
   <ItemGroup>
-    <PackageVersion Include="Mollie.Api" Version="[3.4.1, 4)" />
-    <PackageVersion Include="Umbraco.Commerce.Core" Version="[14.0.0, 15)" />
-    <PackageVersion Include="Microsoft.AspNet.WebApi.Client" Version="[6, 7)" />
-    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="[8, 9)" />
+    <PackageVersion Include="Mollie.Api" Version="[4.4.2, 5)" />
+    <PackageVersion Include="Umbraco.Commerce.Core" Version="[15.0.0, 15.999.999)" />
+    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="[9.0.0, 10)" />
   </ItemGroup>
 </Project>
