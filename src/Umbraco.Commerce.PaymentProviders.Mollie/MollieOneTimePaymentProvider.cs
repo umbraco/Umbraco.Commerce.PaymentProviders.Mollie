@@ -196,6 +196,9 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
                     mollieOrderLines.Add(mollieOrderLine);
 
+                    // Because an order line can have sub order lines and various discounts and fees
+                    // can apply, rather than adding each discount or fee as a separate order line, we
+                    // add a single adjustment to the whole primary order line.
                     if (orderLine.TotalPrice.TotalAdjustment.WithTax != 0)
                     {
                         var isDiscount = orderLine.TotalPrice.TotalAdjustment.WithTax < 0;
@@ -230,12 +233,9 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
                     mollieOrderLines.Add(paymentOrderLine);
 
-                    if (ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax != 0)
+                    if (ctx.Order.PaymentInfo.TotalPrice.Adjustments.Count > 0)
                     {
-                        var isDiscount = ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax < 0;
-                        var name2 = (name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
-
-                        processPrice.Invoke(ctx.Order.PaymentInfo.TotalPrice.Adjustment, mollieOrderLines, name2, 1);
+                        processPriceAdjustments.Invoke(ctx.Order.PaymentInfo.TotalPrice.Adjustments, mollieOrderLines, name, 1);
                     }
                 }
 
@@ -258,12 +258,9 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
                     mollieOrderLines.Add(shippingOrderLine);
 
-                    if (ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax != 0)
+                    if (ctx.Order.ShippingInfo.TotalPrice.Adjustments.Count > 0)
                     {
-                        var isDiscount = ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax < 0;
-                        var name2 = (name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
-
-                        processPrice.Invoke(ctx.Order.ShippingInfo.TotalPrice.Adjustment, mollieOrderLines, name2, 1);
+                        processPriceAdjustments.Invoke(ctx.Order.ShippingInfo.TotalPrice.Adjustments, mollieOrderLines, name, 1);
                     }
                 }
 
