@@ -105,22 +105,28 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 : null;
 
             // Adjustments helper
-            var processPriceAdjustment = new Action<PriceAdjustment, List<OrderLineRequest>, string, int>((adjustment, orderLines, namePrefix, quantity) =>
+            var processPrice = new Action<Price, List<OrderLineRequest>, string, int>((price, orderLines, name, quantity) =>
             {
-                bool isDiscount = adjustment.Price.WithTax < 0;
-                decimal taxRate = (adjustment.Price.WithTax / adjustment.Price.WithoutTax) - 1;
+                bool isDiscount = price.WithTax < 0;
+                decimal taxRate = (price.WithTax / price.WithoutTax) - 1;
 
                 orderLines.Add(new OrderLineRequest
                 {
                     Sku = isDiscount ? "DISCOUNT" : "SURCHARGE",
-                    Name = (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(),
+                    Name = name,
                     Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
                     Quantity = quantity,
-                    UnitPrice = new MollieAmmount(currency.Code, adjustment.Price.WithTax),
+                    UnitPrice = new MollieAmmount(currency.Code, price.WithTax),
                     VatRate = (taxRate * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                    VatAmount = new MollieAmmount(currency.Code, adjustment.Price.Tax * quantity),
-                    TotalAmount = new MollieAmmount(currency.Code, adjustment.Price.WithTax * quantity),
+                    VatAmount = new MollieAmmount(currency.Code, price.Tax * quantity),
+                    TotalAmount = new MollieAmmount(currency.Code, price.WithTax * quantity),
                 });
+            });
+
+            var processPriceAdjustment = new Action<PriceAdjustment, List<OrderLineRequest>, string, int>((adjustment, orderLines, namePrefix, quantity) =>
+            {
+                bool isDiscount = adjustment.Price.WithTax < 0;
+                processPrice.Invoke(adjustment.Price, orderLines, (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(), quantity);
             });
 
             var processPriceAdjustments = new Action<IReadOnlyCollection<PriceAdjustment>, List<OrderLineRequest>, string, int>((adjustments, orderLines, namePrefix, quantity) =>
@@ -178,15 +184,6 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         TotalAmount = new MollieAmmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.WithTax),
                     };
 
-                    // if (orderLine.TotalPrice.TotalAdjustment.WithTax < 0)
-                    // {
-                    //     mollieOrderLine.DiscountAmount = new MollieAmmount(currency.Code, orderLine.TotalPrice.TotalAdjustment.WithTax * -1);
-                    // }
-                    // else if (orderLine.TotalPrice.TotalAdjustment.WithTax > 0)
-                    // {
-                    //     // Not sure we can handle an order line fee?
-                    // }
-
                     if (!string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias))
                     {
                         mollieOrderLine.Type = orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias];
@@ -199,14 +196,12 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
                     mollieOrderLines.Add(mollieOrderLine);
 
-                    if (orderLine.UnitPrice.Adjustments.Count > 0)
+                    if (orderLine.TotalPrice.TotalAdjustment.WithTax != 0)
                     {
-                        processPriceAdjustments.Invoke(orderLine.UnitPrice.Adjustments, mollieOrderLines, orderLine.Name, (int)orderLine.Quantity);
-                    }
+                        var isDiscount = orderLine.TotalPrice.TotalAdjustment.WithTax < 0;
+                        var name = (orderLine.Name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
 
-                    if (orderLine.TotalPrice.Adjustments.Count > 0)
-                    {
-                        processPriceAdjustments.Invoke(orderLine.TotalPrice.Adjustments, mollieOrderLines, orderLine.Name, 1);
+                        processPrice.Invoke(orderLine.TotalPrice.TotalAdjustment, mollieOrderLines, name, 1);
                     }
                 }
 
@@ -233,20 +228,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         TotalAmount = new MollieAmmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
                     };
 
-                    // if (ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax < 0)
-                    // {
-                    //     paymentOrderLine.DiscountAmount = new MollieAmmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax * -1);
-                    // }
-                    // else if (ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax > 0)
-                    // {
-                    //     // Not sure we can handle an order line fee?
-                    // }
-
                     mollieOrderLines.Add(paymentOrderLine);
 
-                    if (ctx.Order.PaymentInfo.TotalPrice.Adjustments.Count > 0)
+                    if (ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax != 0)
                     {
-                        processPriceAdjustments.Invoke(ctx.Order.PaymentInfo.TotalPrice.Adjustments, mollieOrderLines, name, 1);
+                        var isDiscount = ctx.Order.PaymentInfo.TotalPrice.Adjustment.WithTax < 0;
+                        var name2 = (name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
+
+                        processPrice.Invoke(ctx.Order.PaymentInfo.TotalPrice.Adjustment, mollieOrderLines, name2, 1);
                     }
                 }
 
@@ -263,24 +252,18 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Quantity = 1,
                         UnitPrice = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
                         VatRate = (ctx.Order.ShippingInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax),
+                        VatAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.Tax),
+                        TotalAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
                     };
-
-                    // if (ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax < 0)
-                    // {
-                    //     shippingOrderLine.DiscountAmount = new MollieAmmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax * -1);
-                    // }
-                    // else if (ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax > 0)
-                    // {
-                    //     // Not sure we can handle an order line fee?
-                    // }
 
                     mollieOrderLines.Add(shippingOrderLine);
 
-                    if (ctx.Order.ShippingInfo.TotalPrice.Adjustments.Count > 0)
+                    if (ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax != 0)
                     {
-                        processPriceAdjustments.Invoke(ctx.Order.ShippingInfo.TotalPrice.Adjustments, mollieOrderLines, name, 1);
+                        var isDiscount = ctx.Order.ShippingInfo.TotalPrice.Adjustment.WithTax < 0;
+                        var name2 = (name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
+
+                        processPrice.Invoke(ctx.Order.ShippingInfo.TotalPrice.Adjustment, mollieOrderLines, name2, 1);
                     }
                 }
 
