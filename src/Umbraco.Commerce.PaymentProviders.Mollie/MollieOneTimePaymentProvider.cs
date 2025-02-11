@@ -105,7 +105,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 : null;
 
             // Adjustments helper
-            var processPrice = new Action<Price, List<OrderLineRequest>, string, int>((price, orderLines, name, quantity) =>
+            var processAdjustmentPrice = new Action<Price, List<OrderLineRequest>, string, int>((price, orderLines, name, quantity) =>
             {
                 bool isDiscount = price.WithTax < 0;
                 decimal taxRate = (price.WithTax / price.WithoutTax) - 1;
@@ -126,7 +126,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             var processPriceAdjustment = new Action<PriceAdjustment, List<OrderLineRequest>, string, int>((adjustment, orderLines, namePrefix, quantity) =>
             {
                 bool isDiscount = adjustment.Price.WithTax < 0;
-                processPrice.Invoke(adjustment.Price, orderLines, (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(), quantity);
+                processAdjustmentPrice.Invoke(adjustment.Price, orderLines, (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(), quantity);
             });
 
             var processPriceAdjustments = new Action<IReadOnlyCollection<PriceAdjustment>, List<OrderLineRequest>, string, int>((adjustments, orderLines, namePrefix, quantity) =>
@@ -197,14 +197,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     mollieOrderLines.Add(mollieOrderLine);
 
                     // Because an order line can have sub order lines and various discounts and fees
-                    // can apply, rather than adding each discount or fee as a separate order line, we
+                    // can apply, rather than adding each discount or fee to each order line, we
                     // add a single adjustment to the whole primary order line.
                     if (orderLine.TotalPrice.TotalAdjustment.WithTax != 0)
                     {
                         var isDiscount = orderLine.TotalPrice.TotalAdjustment.WithTax < 0;
                         var name = (orderLine.Name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
 
-                        processPrice.Invoke(orderLine.TotalPrice.TotalAdjustment, mollieOrderLines, name, 1);
+                        processAdjustmentPrice.Invoke(orderLine.TotalPrice.TotalAdjustment, mollieOrderLines, name, 1);
                     }
                 }
 
