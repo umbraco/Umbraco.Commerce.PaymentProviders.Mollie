@@ -13,18 +13,21 @@ using Mollie.Api.Models.Order;
 using Mollie.Api.Models.Order.Request;
 using Mollie.Api.Models.Order.Response;
 using Mollie.Api.Models.Payment.Response.PaymentSpecificParameters;
+using Mollie.Api.Models.Refund.Response;
 using Mollie.Api.Models.Shipment.Request;
 using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
 using Umbraco.Commerce.Core.Models;
 using Umbraco.Commerce.Core.PaymentProviders;
+using Umbraco.Commerce.Core.Services;
 using Umbraco.Commerce.Extensions;
 using MollieAmount = Mollie.Api.Models.Amount;
 using MollieLocale = Mollie.Api.Models.Payment.Locale;
-using MollieOrderLineType = Mollie.Api.Models.Order.Request.OrderLineDetailsType;
 using MollieOrderLineStatus = Mollie.Api.Models.Order.Response.OrderLineStatus;
+using MollieOrderLineType = Mollie.Api.Models.Order.Request.OrderLineDetailsType;
 using MollieOrderStatus = Mollie.Api.Models.Order.Response.OrderStatus;
 using MolliePaymentStatus = Mollie.Api.Models.Payment.PaymentStatus;
+using MollieRefundRequest = Mollie.Api.Models.Refund.Request.RefundRequest;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
@@ -33,14 +36,17 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
     {
         private const string MolliePaymentFailed = "failed";
         private ILogger<MollieOneTimePaymentProvider> _logger;
+        private readonly IStoreService _storeService;
         private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
         public MollieOneTimePaymentProvider(
             UmbracoCommerceContext ctx,
-            ILogger<MollieOneTimePaymentProvider> logger)
+            ILogger<MollieOneTimePaymentProvider> logger,
+            IStoreService storeService)
             : base(ctx)
         {
             _logger = logger;
+            _storeService = storeService;
         }
 
         public override bool CanFetchPaymentStatus => true;
@@ -48,6 +54,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         public override bool CanRefundPayments => true;
         public override bool CanCapturePayments => true;
         public override bool FinalizeAtContinueUrl => false;
+        public override bool CanPartiallyRefundPayments => true;
+
+        public override IEnumerable<TransactionMetaDataDefinition> TransactionMetaDataDefinitions => [
+            new TransactionMetaDataDefinition("mollieOrderId"),
+            new TransactionMetaDataDefinition("molliePaymentMethod"),
+            new TransactionMetaDataDefinition("molliePaymentId"),
+        ];
 
         public override string GetCancelUrl(PaymentProviderContext<MollieOneTimeSettings> ctx)
         {
@@ -440,12 +453,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
                     TransactionFee = 0m,
                     TransactionId = mollieOrderId,
-                    PaymentStatus = paymentStatus
+                    PaymentStatus = paymentStatus,
                 },
                 new Dictionary<string, string>
                 {
                     { "mollieOrderId", mollieOrder.Id },
-                    { "molliePaymentMethod", mollieOrder.Method }
+                    { "molliePaymentMethod", mollieOrder.Method },
+                    { "molliePaymentId", (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id ?? string.Empty },
                 });
         }
 
@@ -484,23 +498,67 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
         }
 
-        public override async Task<ApiResult> RefundPaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        [Obsolete("Will be removed in v16. Use the overload that takes an order refund request")]
+        public override async Task<ApiResult?> RefundPaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
-            PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
-            using var mollieRefundClient = new RefundClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            ArgumentNullException.ThrowIfNull(ctx);
 
-            await mollieRefundClient.CreateOrderRefundAsync(mollieOrderId, new OrderRefundRequest { Lines = new List<OrderLineDetails>() });
+            StoreReadOnly store = await _storeService.GetStoreAsync(ctx.Order.StoreId);
+            Amount refundAmount = store.CanRefundTransactionFee ? ctx.Order.TransactionInfo.AmountAuthorized + ctx.Order.TransactionInfo.TransactionFee : ctx.Order.TransactionInfo.AmountAuthorized;
+            return await this.RefundPaymentAsync(
+                ctx,
+                new PaymentProviderOrderRefundRequest
+                {
+                    RefundAmount = refundAmount,
+                    Orderlines = [],
+                },
+                cancellationToken);
+        }
 
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
+        public override async Task<ApiResult?> RefundPaymentAsync(
+            PaymentProviderContext<MollieOneTimeSettings> context,
+            PaymentProviderOrderRefundRequest refundRequest,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentNullException.ThrowIfNull(refundRequest);
+
+            string? molliePaymentId = context.Order.Properties["molliePaymentId"]?.Value;
+            string mollieOrderId = context.Order.Properties["mollieOrderId"]?.Value
+                ?? throw new MolliePaymentProviderGeneralException($"Mollie Order Id could not be found on the order number '{context.Order.OrderNumber}'.");
+            if (string.IsNullOrEmpty(molliePaymentId))
+            {
+                // look for the payment id using order
+                using var mollieOrderClient = new OrderClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
+                OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
+                molliePaymentId = (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id;
+            }
+
+            if (string.IsNullOrEmpty(molliePaymentId))
+            {
+                throw new MolliePaymentProviderGeneralException($"Mollie Payment Id could not be found on the order number '{context.Order.OrderNumber}'.");
+            }
+
+            CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(context.Order.CurrencyId);
+            using var mollieRefundClient = new RefundClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
+            RefundResponse refundResponse = await mollieRefundClient.CreatePaymentRefundAsync(molliePaymentId, new MollieRefundRequest
+            {
+                Amount = new MollieAmount(currency.Code, refundRequest.RefundAmount),
+            });
+
+            if (refundResponse.Status == RefundStatus.Failed)
+            {
+                throw new MolliePaymentProviderGeneralException($"Failed to refund the order number '{context.Order.OrderNumber}'. Mollie Payment Id: '{molliePaymentId}'");
+            }
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
-                    TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
-                }
+                    TransactionId = context.Order.TransactionInfo.TransactionId,
+                    PaymentStatus = await context.Order.CalculateRefundableAmountAsync() == refundRequest.RefundAmount ?
+                        PaymentStatus.Refunded : PaymentStatus.PartiallyRefunded,
+                },
             };
         }
 
@@ -568,12 +626,12 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             // If the order is completed, there is at least one order line that is completed and
             // paid for. If all order lines were canceled, then the whole order would be cancelled
-            if (order.Status == MollieOrderStatus.Paid || order.Status == MollieOrderStatus.Completed)
+            if (order.Status is MollieOrderStatus.Paid or MollieOrderStatus.Completed)
             {
                 return PaymentStatus.Captured;
             }
 
-            if (order.Status == MollieOrderStatus.Canceled || order.Status == MollieOrderStatus.Expired)
+            if (order.Status is MollieOrderStatus.Canceled or MollieOrderStatus.Expired)
             {
                 return PaymentStatus.Cancelled;
             }
