@@ -40,6 +40,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             SortOrder = 1000)]
         public string LiveApiKey { get; set; }
 
+        /// <summary>
+        /// Indicates whether the payment should be captured manually.
+        /// </summary>
+        [PaymentProviderSetting(
+            SortOrder = 1100)]
+        public bool ManualCapture { get; set; }
+
         [PaymentProviderSetting(
             SortOrder = 10000)]
         public bool TestMode { get; set; }

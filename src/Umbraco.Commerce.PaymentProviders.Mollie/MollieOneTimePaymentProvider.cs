@@ -9,12 +9,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Primitives;
 using Mollie.Api.Client;
-using Mollie.Api.Models.Order;
-using Mollie.Api.Models.Order.Request;
+using Mollie.Api.Models.Capture.Request;
 using Mollie.Api.Models.Order.Response;
-using Mollie.Api.Models.Payment.Response.PaymentSpecificParameters;
+using Mollie.Api.Models.Payment;
+using Mollie.Api.Models.Payment.Request;
+using Mollie.Api.Models.Payment.Response;
 using Mollie.Api.Models.Refund.Response;
-using Mollie.Api.Models.Shipment.Request;
 using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
 using Umbraco.Commerce.Core.Models;
@@ -23,9 +23,7 @@ using Umbraco.Commerce.Core.Services;
 using Umbraco.Commerce.Extensions;
 using MollieAmount = Mollie.Api.Models.Amount;
 using MollieLocale = Mollie.Api.Models.Payment.Locale;
-using MollieOrderLineStatus = Mollie.Api.Models.Order.Response.OrderLineStatus;
 using MollieOrderLineType = Mollie.Api.Models.Order.Request.OrderLineDetailsType;
-using MollieOrderStatus = Mollie.Api.Models.Order.Response.OrderStatus;
 using MolliePaymentStatus = Mollie.Api.Models.Payment.PaymentStatus;
 using MollieRefundRequest = Mollie.Api.Models.Refund.Request.RefundRequest;
 
@@ -34,7 +32,6 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
     [PaymentProvider("mollie-onetime")]
     public class MollieOneTimePaymentProvider : PaymentProviderBase<MollieOneTimeSettings>
     {
-        private const string MolliePaymentFailed = "failed";
         private ILogger<MollieOneTimePaymentProvider> _logger;
         private readonly IStoreService _storeService;
         private const string MollieFailureReasonQueryParam = "mollieFailureReason";
@@ -110,20 +107,20 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(ctx.Order.CurrencyId);
             CountryReadOnly country = await Context.Services.CountryService.GetCountryAsync(ctx.Order.PaymentInfo!.CountryId!.Value!);
             PaymentMethodReadOnly paymentMethod = await Context.Services.PaymentMethodService.GetPaymentMethodAsync(ctx.Order.PaymentInfo!.PaymentMethodId!.Value!);
-            ShippingMethodReadOnly shippingMethod = ctx.Order.ShippingInfo.ShippingMethodId.HasValue
+            ShippingMethodReadOnly? shippingMethod = ctx.Order.ShippingInfo.ShippingMethodId.HasValue
                 ? await Context.Services.ShippingMethodService.GetShippingMethodAsync(ctx.Order.ShippingInfo.ShippingMethodId.Value)
                 : null;
 
             // Adjustments helper
-            var processAdjustmentPrice = new Action<Price, List<OrderLineRequest>, string, int>((price, orderLines, name, quantity) =>
+            var processAdjustmentPrice = new Action<Price, List<PaymentLine>, string, int>((price, paymentLines, name, quantity) =>
             {
                 bool isDiscount = price.WithTax < 0;
                 decimal taxRate = (price.WithTax / price.WithoutTax) - 1;
 
-                orderLines.Add(new OrderLineRequest
+                paymentLines.Add(new PaymentLine
                 {
                     Sku = isDiscount ? "DISCOUNT" : "SURCHARGE",
-                    Name = name,
+                    Description = name,
                     Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
                     Quantity = quantity,
                     UnitPrice = new MollieAmount(currency.Code, price.WithTax),
@@ -133,235 +130,233 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 });
             });
 
-            var processPriceAdjustment = new Action<PriceAdjustment, List<OrderLineRequest>, string, int>((adjustment, orderLines, namePrefix, quantity) =>
+            var processPriceAdjustment = new Action<PriceAdjustment, List<PaymentLine>, string, int>((adjustment, paymentLines, namePrefix, quantity) =>
             {
                 bool isDiscount = adjustment.Price.WithTax < 0;
-                processAdjustmentPrice.Invoke(adjustment.Price, orderLines, (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(), quantity);
+                processAdjustmentPrice.Invoke(adjustment.Price, paymentLines, (namePrefix + " " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name).Trim(), quantity);
             });
 
-            var processPriceAdjustments = new Action<IReadOnlyCollection<PriceAdjustment>, List<OrderLineRequest>, string, int>((adjustments, orderLines, namePrefix, quantity) =>
+            var processPriceAdjustments = new Action<IReadOnlyCollection<PriceAdjustment>, List<PaymentLine>, string, int>((adjustments, paymentLines, namePrefix, quantity) =>
             {
                 foreach (PriceAdjustment adjustment in adjustments)
                 {
-                    processPriceAdjustment.Invoke(adjustment, orderLines, namePrefix, quantity);
+                    processPriceAdjustment.Invoke(adjustment, paymentLines, namePrefix, quantity);
                 }
             });
 
-            // Create the order
-            using (var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
+            // Create the payment
+            using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            var mollieOrderAddress = new PaymentAddressDetails
             {
-                var mollieOrderAddress = new OrderAddressDetails
-                {
-                    GivenName = ctx.Order.CustomerInfo.FirstName,
-                    FamilyName = ctx.Order.CustomerInfo.LastName,
-                    Email = ctx.Order.CustomerInfo.Email,
-                    Country = country.Code,
-                };
+                GivenName = ctx.Order.CustomerInfo.FirstName,
+                FamilyName = ctx.Order.CustomerInfo.LastName,
+                Email = ctx.Order.CustomerInfo.Email,
+                Country = country.Code,
+            };
 
-                if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressLine1PropertyAlias))
-                {
-                    mollieOrderAddress.StreetAndNumber = ctx.Order.Properties[ctx.Settings.BillingAddressLine1PropertyAlias];
-                }
-
-                if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressCityPropertyAlias))
-                {
-                    mollieOrderAddress.City = ctx.Order.Properties[ctx.Settings.BillingAddressCityPropertyAlias];
-                }
-
-                if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressStatePropertyAlias))
-                {
-                    mollieOrderAddress.Region = ctx.Order.Properties[ctx.Settings.BillingAddressStatePropertyAlias];
-                }
-
-                if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressZipCodePropertyAlias))
-                {
-                    mollieOrderAddress.PostalCode = ctx.Order.Properties[ctx.Settings.BillingAddressZipCodePropertyAlias];
-                }
-
-                var mollieOrderLines = new List<OrderLineRequest>();
-
-                // Process order lines
-                foreach (OrderLineReadOnly orderLine in ctx.Order.OrderLines)
-                {
-                    var mollieOrderLine = new OrderLineRequest
-                    {
-                        Sku = orderLine.Sku,
-                        Name = orderLine.Name,
-                        Quantity = (int)orderLine.Quantity,
-                        UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
-                        VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.WithTax)
-                    };
-
-                    if (!string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias))
-                    {
-                        mollieOrderLine.Type = orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias];
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductCategoryPropertyAlias))
-                    {
-                        mollieOrderLine.Category = orderLine.Properties[ctx.Settings.OrderLineProductCategoryPropertyAlias];
-                    }
-
-                    mollieOrderLines.Add(mollieOrderLine);
-
-                    // Because an order line can have sub order lines and various discounts and fees
-                    // can apply, rather than adding each discount or fee to each order line, we
-                    // add a single adjustment to the whole primary order line.
-                    if (orderLine.TotalPrice.TotalAdjustment.WithTax != 0)
-                    {
-                        var isDiscount = orderLine.TotalPrice.TotalAdjustment.WithTax < 0;
-                        var name = (orderLine.Name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
-
-                        processAdjustmentPrice.Invoke(orderLine.TotalPrice.TotalAdjustment, mollieOrderLines, name, 1);
-                    }
-                }
-
-                // Process subtotal price adjustments
-                if (ctx.Order.SubtotalPrice.Adjustments.Count > 0)
-                {
-                    processPriceAdjustments.Invoke(ctx.Order.SubtotalPrice.Adjustments, mollieOrderLines, "Subtotal", 1);
-                }
-
-                // Process payment fee
-                if (ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax > 0)
-                {
-                    var name = $"{paymentMethod.Name} Charge";
-
-                    var paymentOrderLine = new OrderLineRequest
-                    {
-                        Sku = !string.IsNullOrWhiteSpace(paymentMethod.Sku) ? paymentMethod.Sku : "PF001",
-                        Name = name,
-                        Type = MollieOrderLineType.Surcharge,
-                        Quantity = 1,
-                        UnitPrice = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
-                        VatRate = (ctx.Order.PaymentInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.WithTax)
-                    };
-
-                    mollieOrderLines.Add(paymentOrderLine);
-
-                    if (ctx.Order.PaymentInfo.TotalPrice.Adjustments.Count > 0)
-                    {
-                        processPriceAdjustments.Invoke(ctx.Order.PaymentInfo.TotalPrice.Adjustments, mollieOrderLines, name, 1);
-                    }
-                }
-
-                // Process shipping fee
-                if (shippingMethod != null && ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax > 0)
-                {
-                    var name = $"{shippingMethod.Name} Charge";
-
-                    var shippingOrderLine = new OrderLineRequest
-                    {
-                        Sku = !string.IsNullOrWhiteSpace(shippingMethod.Sku) ? shippingMethod.Sku : "SF001",
-                        Name = name,
-                        Type = MollieOrderLineType.ShippingFee,
-                        Quantity = 1,
-                        UnitPrice = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
-                        VatRate = (ctx.Order.ShippingInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
-                        TotalAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax)
-                    };
-
-                    mollieOrderLines.Add(shippingOrderLine);
-
-                    if (ctx.Order.ShippingInfo.TotalPrice.Adjustments.Count > 0)
-                    {
-                        processPriceAdjustments.Invoke(ctx.Order.ShippingInfo.TotalPrice.Adjustments, mollieOrderLines, name, 1);
-                    }
-                }
-
-                // Process total price adjustments
-                if (ctx.Order.TotalPrice.Adjustments.Count > 0)
-                {
-                    processPriceAdjustments.Invoke(ctx.Order.TotalPrice.Adjustments, mollieOrderLines, "Total", 1);
-                }
-
-                // Process gift cards
-                var giftCards = ctx.Order.TransactionAmount.Adjustments.OfType<GiftCardAdjustment>().ToList();
-                if (giftCards.Count > 0)
-                {
-                    foreach (GiftCardAdjustment giftCard in giftCards)
-                    {
-                        mollieOrderLines.Add(new OrderLineRequest
-                        {
-                            Sku = "GIFT_CARD",
-                            Name = "Gift Card - " + giftCard.GiftCardCode,
-                            Type = MollieOrderLineType.GiftCard,
-                            Quantity = 1,
-                            UnitPrice = new MollieAmount(currency.Code, giftCard.Amount.Value),
-                            VatRate = "0.00",
-                            VatAmount = new MollieAmount(currency.Code, 0m),
-                            TotalAmount = new MollieAmount(currency.Code, giftCard.Amount.Value)
-                        });
-                    }
-                }
-
-                // Process other adjustment types
-                var amountAdjustments = ctx.Order.TransactionAmount.Adjustments.Where(x => !(x is GiftCardAdjustment)).ToList();
-                if (amountAdjustments.Count > 0)
-                {
-                    foreach (AmountAdjustment adjustment in amountAdjustments)
-                    {
-                        bool isDiscount = adjustment.Amount.Value < 0;
-
-                        mollieOrderLines.Add(new OrderLineRequest
-                        {
-                            Sku = isDiscount ? "DISCOUNT" : "SURCHARGE",
-                            Name = "Transaction " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name,
-                            Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
-                            Quantity = 1,
-                            UnitPrice = new MollieAmount(currency.Code, adjustment.Amount.Value),
-                            VatRate = "0.00",
-                            VatAmount = new MollieAmount(currency.Code, 0m),
-                            TotalAmount = new MollieAmount(currency.Code, adjustment.Amount.Value)
-                        });
-                    }
-                }
-
-                var mollieOrderRequest = new OrderRequest
-                {
-                    Amount = new MollieAmount(currency.Code.ToUpperInvariant(), ctx.Order.TransactionAmount.Value),
-                    OrderNumber = ctx.Order.OrderNumber,
-                    Lines = mollieOrderLines,
-                    Metadata = ctx.Order.GenerateOrderReference(),
-                    BillingAddress = mollieOrderAddress,
-                    RedirectUrl = ctx.Urls.CallbackUrl + "?redirect=true", // Explicitly redirect to the callback URL as this will need to do more processing to decide where to redirect to
-                    WebhookUrl = ctx.Urls.CallbackUrl,
-                    Locale = !string.IsNullOrWhiteSpace(ctx.Settings.Locale) ? ctx.Settings.Locale : MollieLocale.en_US,
-                };
-
-                if (!string.IsNullOrWhiteSpace(ctx.Settings.PaymentMethods))
-                {
-                    var paymentMethods = ctx.Settings.PaymentMethods.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(x => x.Trim())
-                        .Where(x => !string.IsNullOrWhiteSpace(x))
-                        .ToList();
-
-                    if (paymentMethods.Count == 1)
-                    {
-                        mollieOrderRequest.Method = paymentMethods[0];
-                    }
-                    else if (paymentMethods.Count > 1)
-                    {
-                        mollieOrderRequest.Methods = paymentMethods;
-                    }
-                }
-
-                OrderResponse mollieOrderResult = await mollieOrderClient.CreateOrderAsync(mollieOrderRequest);
-
-                return new PaymentFormResult
-                {
-                    Form = new PaymentForm(mollieOrderResult.Links.Checkout.Href, PaymentFormMethod.Get),
-                    MetaData = new Dictionary<string, string>()
-                    {
-                        { "mollieOrderId", mollieOrderResult.Id }
-                    }
-                };
+            if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressLine1PropertyAlias))
+            {
+                mollieOrderAddress.StreetAndNumber = ctx.Order.Properties[ctx.Settings.BillingAddressLine1PropertyAlias];
             }
+
+            if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressCityPropertyAlias))
+            {
+                mollieOrderAddress.City = ctx.Order.Properties[ctx.Settings.BillingAddressCityPropertyAlias];
+            }
+
+            if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressStatePropertyAlias))
+            {
+                mollieOrderAddress.Region = ctx.Order.Properties[ctx.Settings.BillingAddressStatePropertyAlias];
+            }
+
+            if (!string.IsNullOrWhiteSpace(ctx.Settings.BillingAddressZipCodePropertyAlias))
+            {
+                mollieOrderAddress.PostalCode = ctx.Order.Properties[ctx.Settings.BillingAddressZipCodePropertyAlias];
+            }
+
+            var molliePaymentLines = new List<PaymentLine>();
+
+            // Process order lines
+            foreach (OrderLineReadOnly orderLine in ctx.Order.OrderLines)
+            {
+                var molliePaymentLine = new PaymentLine
+                {
+                    Sku = orderLine.Sku,
+                    Description = orderLine.Name,
+                    Quantity = (int)orderLine.Quantity,
+                    UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
+                    VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
+                    VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.Tax),
+                    TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.WithTax),
+                    Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
+                        ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
+                        : MollieOrderLineType.Physical,
+                };
+
+                if (!string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductCategoryPropertyAlias))
+                {
+                    molliePaymentLine.Categories = orderLine.Properties[ctx.Settings.OrderLineProductCategoryPropertyAlias].Value.Split(',');
+                }
+
+                molliePaymentLines.Add(molliePaymentLine);
+
+                // Because an order line can have sub order lines and various discounts and fees
+                // can apply, rather than adding each discount or fee to each order line, we
+                // add a single adjustment to the whole primary order line.
+                if (orderLine.TotalPrice.TotalAdjustment.WithTax != 0)
+                {
+                    bool isDiscount = orderLine.TotalPrice.TotalAdjustment.WithTax < 0;
+                    string name = (orderLine.Name + " " + (isDiscount ? "Discount" : "Fee")).Trim();
+
+                    processAdjustmentPrice.Invoke(orderLine.TotalPrice.TotalAdjustment, molliePaymentLines, name, 1);
+                }
+            }
+
+            // Process subtotal price adjustments
+            if (ctx.Order.SubtotalPrice.Adjustments.Count > 0)
+            {
+                processPriceAdjustments.Invoke(ctx.Order.SubtotalPrice.Adjustments, molliePaymentLines, "Subtotal", 1);
+            }
+
+            // Process payment fee
+            if (ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax > 0)
+            {
+                string name = $"{paymentMethod.Name} Charge";
+
+                var paymentOrderLine = new PaymentLine
+                {
+                    Sku = !string.IsNullOrWhiteSpace(paymentMethod.Sku) ? paymentMethod.Sku : "PF001",
+                    Description = name,
+                    Type = MollieOrderLineType.Surcharge,
+                    Quantity = 1,
+                    UnitPrice = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
+                    VatRate = (ctx.Order.PaymentInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
+                    VatAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.Tax),
+                    TotalAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.WithTax),
+                };
+
+                molliePaymentLines.Add(paymentOrderLine);
+
+                if (ctx.Order.PaymentInfo.TotalPrice.Adjustments.Count > 0)
+                {
+                    processPriceAdjustments.Invoke(ctx.Order.PaymentInfo.TotalPrice.Adjustments, molliePaymentLines, name, 1);
+                }
+            }
+
+            // Process shipping fee
+            if (shippingMethod != null && ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax > 0)
+            {
+                string name = $"{shippingMethod.Name} Charge";
+
+                var shippingOrderLine = new PaymentLine
+                {
+                    Sku = !string.IsNullOrWhiteSpace(shippingMethod.Sku) ? shippingMethod.Sku : "SF001",
+                    Description = name,
+                    Type = MollieOrderLineType.ShippingFee,
+                    Quantity = 1,
+                    UnitPrice = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
+                    VatRate = (ctx.Order.ShippingInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
+                    VatAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
+                    TotalAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax),
+                };
+
+                molliePaymentLines.Add(shippingOrderLine);
+
+                if (ctx.Order.ShippingInfo.TotalPrice.Adjustments.Count > 0)
+                {
+                    processPriceAdjustments.Invoke(ctx.Order.ShippingInfo.TotalPrice.Adjustments, molliePaymentLines, name, 1);
+                }
+            }
+
+            // Process total price adjustments
+            if (ctx.Order.TotalPrice.Adjustments.Count > 0)
+            {
+                processPriceAdjustments.Invoke(ctx.Order.TotalPrice.Adjustments, molliePaymentLines, "Total", 1);
+            }
+
+            // Process gift cards
+            var giftCards = ctx.Order.TransactionAmount.Adjustments.OfType<GiftCardAdjustment>().ToList();
+            if (giftCards.Count > 0)
+            {
+                foreach (GiftCardAdjustment giftCard in giftCards)
+                {
+                    molliePaymentLines.Add(new PaymentLine
+                    {
+                        Sku = "GIFT_CARD",
+                        Description = "Gift Card - " + giftCard.GiftCardCode,
+                        Type = MollieOrderLineType.GiftCard,
+                        Quantity = 1,
+                        UnitPrice = new MollieAmount(currency.Code, giftCard.Amount.Value),
+                        VatRate = "0.00",
+                        VatAmount = new MollieAmount(currency.Code, 0m),
+                        TotalAmount = new MollieAmount(currency.Code, giftCard.Amount.Value),
+                    });
+                }
+            }
+
+            // Process other adjustment types
+            var amountAdjustments = ctx.Order.TransactionAmount.Adjustments.Where(x => x is not GiftCardAdjustment).ToList();
+            if (amountAdjustments.Count > 0)
+            {
+                foreach (AmountAdjustment adjustment in amountAdjustments)
+                {
+                    bool isDiscount = adjustment.Amount.Value < 0;
+
+                    molliePaymentLines.Add(new PaymentLine
+                    {
+                        Sku = isDiscount ? "DISCOUNT" : "SURCHARGE",
+                        Description = "Transaction " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name,
+                        Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
+                        Quantity = 1,
+                        UnitPrice = new MollieAmount(currency.Code, adjustment.Amount.Value),
+                        VatRate = "0.00",
+                        VatAmount = new MollieAmount(currency.Code, 0m),
+                        TotalAmount = new MollieAmount(currency.Code, adjustment.Amount.Value),
+                    });
+                }
+            }
+
+            var molliePaymentRequest = new PaymentRequest
+            {
+                Amount = new MollieAmount(currency.Code.ToUpperInvariant(), ctx.Order.TransactionAmount.Value),
+                Description = ctx.Order.OrderNumber,
+                Lines = molliePaymentLines,
+                Metadata = ctx.Order.GenerateOrderReference(),
+                BillingAddress = mollieOrderAddress,
+                RedirectUrl = ctx.Urls.CallbackUrl + "?redirect=true", // Explicitly redirect to the callback URL as this will need to do more processing to decide where to redirect to
+                WebhookUrl = ctx.Urls.CallbackUrl,
+                Locale = !string.IsNullOrWhiteSpace(ctx.Settings.Locale) ? ctx.Settings.Locale : MollieLocale.en_US,
+                CaptureMode = ctx.Settings.ManualCapture ? "manual" : null,
+            };
+
+            if (!string.IsNullOrWhiteSpace(ctx.Settings.PaymentMethods))
+            {
+                var paymentMethods = ctx.Settings.PaymentMethods.Split([','], StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => x.Trim())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .ToList();
+
+                if (paymentMethods.Count == 1)
+                {
+                    molliePaymentRequest.Method = paymentMethods[0];
+                }
+                else if (paymentMethods.Count > 1)
+                {
+                    molliePaymentRequest.Methods = paymentMethods;
+                }
+            }
+
+            PaymentResponse molliePaymentResult = await molliePaymentClient.CreatePaymentAsync(molliePaymentRequest, false, cancellationToken);
+            return new PaymentFormResult
+            {
+                Form = new PaymentForm(molliePaymentResult.Links.Checkout!.Href, PaymentFormMethod.Get),
+                MetaData = new Dictionary<string, string>()
+                {
+                    { "mollieOrderId", molliePaymentResult.OrderId ?? string.Empty },
+                    { "molliePaymentId", molliePaymentResult.Id },
+                    { "molliePaymentMethod", molliePaymentResult.Method ?? string.Empty },
+                },
+            };
         }
 
         public override async Task<CallbackResult> ProcessCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
@@ -378,71 +373,72 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             }
         }
 
-        private static async Task<CallbackResult> ProcessRedirectCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        private async Task<CallbackResult> ProcessRedirectCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
             var result = new CallbackResult();
 
-            PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
-            using (var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
+            string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
+            _logger.Debug("ProcessRedirectCallbackAsync - molliePaymentId: {molliePaymentId}", molliePaymentId);
+            using (var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
-                OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true);
-                if (mollieOrder != null)
+                PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, includeRemainderDetails: true, cancellationToken: cancellationToken);
+                Core.Models.PaymentStatus paymentStatus = await GetPaymentStatusAsync(ctx, molliePayment, cancellationToken);
+                if (paymentStatus == Core.Models.PaymentStatus.Error)
                 {
-                    var payments = (mollieOrder.Embedded?.Payments ?? []).ToList();
-                    var lastPayment = payments.Last() as CreditCardPaymentResponse;
-                    if (lastPayment?.Status == MolliePaymentStatus.Failed)
+                    // Mollie may redirect user here when the payment failed.
+                    // We need to redirect user to the UC error page.
+                    result.ActionResult = new RedirectResult($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={molliePayment.StatusReason?.Code}", false);
+                }
+                else if (paymentStatus == Core.Models.PaymentStatus.Cancelled)
+                {
+                    result.ActionResult = new RedirectResult(ctx.Urls.CancelUrl, false);
+                }
+                else
+                {
+                    // If the order is pending, Mollie won't sent a webhook notification so
+                    // we check for this on the return URL and if the order is pending, finalize it
+                    // and set it's status to pending before progressing to the confirmation page
+                    if (paymentStatus == Core.Models.PaymentStatus.PendingExternalSystem)
                     {
-                        // Mollie redirects user here when the payment failed
-                        result.ActionResult = new RedirectResult($"{ctx.Urls.ErrorUrl}?{MollieFailureReasonQueryParam}={lastPayment.Details?.FailureReason}", false);
-
-                    }
-                    else if (payments.All(x => x.Status == MolliePaymentStatus.Canceled))
-                    {
-                        result.ActionResult = new RedirectResult(ctx.Urls.CancelUrl, false);
-                    }
-                    else
-                    {
-                        // If the order is pending, Mollie won't sent a webhook notification so
-                        // we check for this on the return URL and if the order is pending, finalize it
-                        // and set it's status to pending before progressing to the confirmation page
-                        if (mollieOrder.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                        result.TransactionInfo = new TransactionInfo
                         {
-                            result.TransactionInfo = new TransactionInfo
-                            {
-                                AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
-                                TransactionFee = 0m,
-                                TransactionId = mollieOrderId,
-                                PaymentStatus = PaymentStatus.PendingExternalSystem,
-                            };
-                        }
-
-                        result.ActionResult = new RedirectResult(ctx.Urls.ContinueUrl, false);
+                            AmountAuthorized = decimal.Parse(molliePayment.Amount.Value, CultureInfo.InvariantCulture),
+                            TransactionFee = 0m,
+                            TransactionId = molliePaymentId,
+                            PaymentStatus = Core.Models.PaymentStatus.PendingExternalSystem,
+                        };
                     }
+
+                    result.ActionResult = new RedirectResult(ctx.Urls.ContinueUrl, false);
                 }
             }
 
             return result;
         }
 
-        private static async Task<CallbackResult> ProcessWebhookCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        private async Task<CallbackResult> ProcessWebhookCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
-            // Validate the ID from the webhook matches the orders mollieOrderId property
             IFormCollection formData = await ctx.HttpContext.Request.ReadFormAsync(cancellationToken);
-            string id = formData["id"];
+            string? id = formData["id"];
 
-            PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
-            if (id != mollieOrderId)
+            string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
+
+            // Validate the ID from the webhook matches the order's molliePaymentId property
+            if (id != molliePaymentId)
             {
                 return CallbackResult.Ok();
             }
 
-            using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
-            PaymentStatus paymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken);
+
+            using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            Core.Models.PaymentStatus paymentStatus = await GetPaymentStatusAsync(ctx, molliePayment, cancellationToken);
+
+            _logger.Debug("ProcessWebhookCallbackAsync - molliePaymentId: {molliePaymentId}; molliePayment.Status: {molliePaymentStatus};", molliePaymentId, molliePayment.Status);
 
             // Mollie sends cancelled notifications for unfinalized orders so we need to ensure that
             // we only cancel orders that are authorized
-            if (paymentStatus == PaymentStatus.Cancelled && ctx.Order.TransactionInfo.PaymentStatus != PaymentStatus.Authorized)
+            if (paymentStatus == Core.Models.PaymentStatus.Cancelled && ctx.Order.TransactionInfo.PaymentStatus != Core.Models.PaymentStatus.Authorized)
             {
                 return CallbackResult.Ok();
             }
@@ -450,43 +446,41 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             return CallbackResult.Ok(
                 new TransactionInfo
                 {
-                    AmountAuthorized = decimal.Parse(mollieOrder.Amount.Value, CultureInfo.InvariantCulture),
+                    AmountAuthorized = decimal.Parse(molliePayment.Amount.Value, CultureInfo.InvariantCulture),
                     TransactionFee = 0m,
-                    TransactionId = mollieOrderId,
+                    TransactionId = molliePaymentId,
                     PaymentStatus = paymentStatus,
                 },
                 new Dictionary<string, string>
                 {
-                    { "mollieOrderId", mollieOrder.Id },
-                    { "molliePaymentMethod", mollieOrder.Method },
-                    { "molliePaymentId", (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id ?? string.Empty },
+                    { "molliePaymentMethod", molliePayment.Method ?? string.Empty },
+                    { "molliePaymentId", molliePayment.Id },
                 });
         }
 
-        public override async Task<ApiResult> FetchPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        public override async Task<ApiResult> FetchPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
         {
-            PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
-            using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
+            string molliePaymentId = await GetMolliePaymentIdAsync(context, cancellationToken);
+            using var molliePaymentClient = new PaymentClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
+            PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
-                    TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
-                }
+                    TransactionId = context.Order.TransactionInfo.TransactionId,
+                    PaymentStatus = await GetPaymentStatusAsync(context, molliePayment, cancellationToken),
+                },
             };
         }
 
         public override async Task<ApiResult> CancelPaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
-            PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
-            using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
+            using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            await molliePaymentClient.CancelPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
 
-            await mollieOrderClient.CancelOrderAsync(mollieOrderId);
-
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
+            PaymentResponse mollieOrder = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
 
             return new ApiResult
             {
@@ -494,25 +488,8 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
                     PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
-                }
-            };
-        }
-
-        [Obsolete("Will be removed in v16. Use the overload that takes an order refund request")]
-        public override async Task<ApiResult?> RefundPaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
-        {
-            ArgumentNullException.ThrowIfNull(ctx);
-
-            StoreReadOnly store = await _storeService.GetStoreAsync(ctx.Order.StoreId);
-            Amount refundAmount = store.CanRefundTransactionFee ? ctx.Order.TransactionInfo.AmountAuthorized + ctx.Order.TransactionInfo.TransactionFee : ctx.Order.TransactionInfo.AmountAuthorized;
-            return await this.RefundPaymentAsync(
-                ctx,
-                new PaymentProviderOrderRefundRequest
-                {
-                    RefundAmount = refundAmount,
-                    Orderlines = [],
                 },
-                cancellationToken);
+            };
         }
 
         public override async Task<ApiResult?> RefundPaymentAsync(
@@ -523,28 +500,16 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             ArgumentNullException.ThrowIfNull(context);
             ArgumentNullException.ThrowIfNull(refundRequest);
 
-            string? molliePaymentId = context.Order.Properties["molliePaymentId"]?.Value;
-            string mollieOrderId = context.Order.Properties["mollieOrderId"]?.Value
-                ?? throw new MolliePaymentProviderGeneralException($"Mollie Order Id could not be found on the order number '{context.Order.OrderNumber}'.");
-            if (string.IsNullOrEmpty(molliePaymentId))
-            {
-                // look for the payment id using order
-                using var mollieOrderClient = new OrderClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
-                OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
-                molliePaymentId = (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id;
-            }
-
-            if (string.IsNullOrEmpty(molliePaymentId))
-            {
-                throw new MolliePaymentProviderGeneralException($"Mollie Payment Id could not be found on the order number '{context.Order.OrderNumber}'.");
-            }
-
+            string molliePaymentId = await GetMolliePaymentIdAsync(context, cancellationToken);
             CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(context.Order.CurrencyId);
             using var mollieRefundClient = new RefundClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
-            RefundResponse refundResponse = await mollieRefundClient.CreatePaymentRefundAsync(molliePaymentId, new MollieRefundRequest
-            {
-                Amount = new MollieAmount(currency.Code, refundRequest.RefundAmount),
-            });
+            RefundResponse refundResponse = await mollieRefundClient.CreatePaymentRefundAsync(
+                molliePaymentId,
+                new MollieRefundRequest
+                {
+                    Amount = new MollieAmount(currency.Code, refundRequest.RefundAmount),
+                },
+                cancellationToken);
 
             if (refundResponse.Status == RefundStatus.Failed)
             {
@@ -557,91 +522,80 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 {
                     TransactionId = context.Order.TransactionInfo.TransactionId,
                     PaymentStatus = await context.Order.CalculateRefundableAmountAsync() == refundRequest.RefundAmount ?
-                        PaymentStatus.Refunded : PaymentStatus.PartiallyRefunded,
+                        Core.Models.PaymentStatus.Refunded : Core.Models.PaymentStatus.PartiallyRefunded,
                 },
             };
         }
 
+        /// <summary>
+        /// Look for the mollie payment id from order properties or fetch from mollie order api.
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        /// <exception cref="MolliePaymentProviderGeneralException">Throws when the mollie payment id could not be found.</exception>
+        private static async Task<string> GetMolliePaymentIdAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
+        {
+            string? molliePaymentId = context.Order.Properties["molliePaymentId"]?.Value;
+            if (!string.IsNullOrEmpty(molliePaymentId))
+            {
+                return molliePaymentId;
+            }
+
+            string mollieOrderId = context.Order.Properties["mollieOrderId"]?.Value
+                                ?? throw new MolliePaymentProviderGeneralException($"Mollie Order Id could not be found on the order number '{context.Order.OrderNumber}'.");
+            using var mollieOrderClient = new OrderClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
+            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true, cancellationToken: cancellationToken);
+            molliePaymentId = (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id;
+
+            if (!string.IsNullOrEmpty(molliePaymentId))
+            {
+                return molliePaymentId;
+            }
+
+            throw new MolliePaymentProviderGeneralException($"Mollie Payment Id could not be found on the order number '{context.Order.OrderNumber}'.");
+        }
+
         public override async Task<ApiResult> CapturePaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
         {
-            PropertyValue mollieOrderId = ctx.Order.Properties["mollieOrderId"];
-            using var mollieShipmentClient = new ShipmentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            using var mollieOrderClient = new OrderClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
+            using var mollieCaptureApi = new CaptureClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            await mollieCaptureApi.CreateCapture(
+                molliePaymentId,
+                new CaptureRequest(),
+                cancellationToken);
 
-            await mollieShipmentClient.CreateShipmentAsync(mollieOrderId, new ShipmentRequest());
-
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true);
+            using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
+            PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
 
             return new ApiResult
             {
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
-                }
+                    PaymentStatus = await GetPaymentStatusAsync(ctx, molliePayment, cancellationToken),
+                },
             };
         }
 
-        private static async Task<PaymentStatus> GetPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, OrderResponse order, CancellationToken cancellationToken = default)
+        private static async Task<Core.Models.PaymentStatus> GetPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, PaymentResponse molliePayment, CancellationToken cancellationToken = default)
         {
-            // The order is refunded if the total refunded amount is
-            // greater than or equal to the original amount of the order
-            if (order.AmountRefunded != null)
+            if (molliePayment.AmountRefunded != null && molliePayment.AmountRefunded > 0)
             {
-                decimal amount = decimal.Parse(order.Amount.Value, CultureInfo.InvariantCulture);
-                decimal amountRefunded = decimal.Parse(order.AmountRefunded.Value, CultureInfo.InvariantCulture);
-
-                if (amountRefunded >= amount)
-                {
-                    return PaymentStatus.Refunded;
-                }
+                // The order is refunded if the total refunded amount is
+                // greater than or equal to the original amount of the order
+                return await ctx.Order.CalculateRefundableAmountAsync() <= molliePayment.AmountRefunded ?
+                        Core.Models.PaymentStatus.Refunded : Core.Models.PaymentStatus.PartiallyRefunded;
             }
 
-            // If there are any open refunds that are not in a failed status
-            // we'll just assume to the order is refunded untill we know otherwise
-            using (var mollieRefundClient = new RefundClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
+            return molliePayment.Status switch
             {
-                global::Mollie.Api.Models.List.Response.ListResponse<global::Mollie.Api.Models.Refund.Response.RefundResponse> refunds = await mollieRefundClient.GetOrderRefundListAsync(order.Id);
-                if (refunds.Items.Any(x => x.Status != MolliePaymentFailed))
-                {
-                    return PaymentStatus.Refunded;
-                }
-            }
-
-            // If the order is in a shipping status, at least one of the order lines
-            // should be in an authorized or paid status. If there are any authorized
-            // rows, then set the whole order as authorized, otherwise we'll see it's
-            // captured.
-            if (order.Status == MollieOrderStatus.Shipping)
-            {
-                if (order.Lines.Any(x => x.Status == MollieOrderLineStatus.Authorized))
-                {
-                    return PaymentStatus.Authorized;
-                }
-                else
-                {
-                    return PaymentStatus.Captured;
-                }
-            }
-
-            // If the order is completed, there is at least one order line that is completed and
-            // paid for. If all order lines were canceled, then the whole order would be cancelled
-            if (order.Status is MollieOrderStatus.Paid or MollieOrderStatus.Completed)
-            {
-                return PaymentStatus.Captured;
-            }
-
-            if (order.Status is MollieOrderStatus.Canceled or MollieOrderStatus.Expired)
-            {
-                return PaymentStatus.Cancelled;
-            }
-
-            if (order.Status == MollieOrderStatus.Authorized)
-            {
-                return PaymentStatus.Authorized;
-            }
-
-            return PaymentStatus.PendingExternalSystem;
+                MolliePaymentStatus.Authorized => Core.Models.PaymentStatus.Authorized,
+                MolliePaymentStatus.Canceled or MolliePaymentStatus.Expired => Core.Models.PaymentStatus.Cancelled,
+                MolliePaymentStatus.Paid => Core.Models.PaymentStatus.Captured,
+                MolliePaymentStatus.Failed => Core.Models.PaymentStatus.Error,
+                _ => Core.Models.PaymentStatus.PendingExternalSystem,
+            };
         }
     }
 }
