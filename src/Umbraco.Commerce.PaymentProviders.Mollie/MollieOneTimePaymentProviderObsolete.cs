@@ -15,7 +15,6 @@ using Mollie.Api.Models.Order.Response;
 using Mollie.Api.Models.Payment.Response.PaymentSpecificParameters;
 using Mollie.Api.Models.Refund.Response;
 using Mollie.Api.Models.Shipment.Request;
-using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
 using Umbraco.Commerce.Core.Models;
 using Umbraco.Commerce.Core.PaymentProviders;
@@ -36,17 +35,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
     public class MollieOneTimePaymentProviderObsolete : PaymentProviderBase<MollieOneTimeSettings>
     {
         private const string MolliePaymentFailed = "failed";
-        private ILogger<MollieOneTimePaymentProviderObsolete> _logger;
         private readonly IStoreService _storeService;
         private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
         public MollieOneTimePaymentProviderObsolete(
             UmbracoCommerceContext ctx,
-            ILogger<MollieOneTimePaymentProviderObsolete> logger,
             IStoreService storeService)
             : base(ctx)
         {
-            _logger = logger;
             _storeService = storeService;
         }
 
