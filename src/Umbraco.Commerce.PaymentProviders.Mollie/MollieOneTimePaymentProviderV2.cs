@@ -29,7 +29,7 @@ using MollieRefundRequest = Mollie.Api.Models.Refund.Request.RefundRequest;
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
     [PaymentProvider("mollie-onetime-v2")]
-    public class MollieOneTimePaymentProviderV2 : PaymentProviderBase<MollieOneTimeSettings>
+    public class MollieOneTimePaymentProviderV2 : PaymentProviderBase<MollieOneTimeSettingsV2>
     {
         private readonly ILogger<MollieOneTimePaymentProviderV2> _logger;
         private const string MollieFailureReasonQueryParam = "mollieFailureReason";
@@ -55,14 +55,14 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             new TransactionMetaDataDefinition("molliePaymentId"),
         ];
 
-        public override string GetCancelUrl(PaymentProviderContext<MollieOneTimeSettings> ctx)
+        public override string GetCancelUrl(PaymentProviderContext<MollieOneTimeSettingsV2> ctx)
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.CancelUrl.MustNotBeNull("settings.CancelUrl");
             return ctx.Settings.CancelUrl;
         }
 
-        public override string GetErrorUrl(PaymentProviderContext<MollieOneTimeSettings> ctx)
+        public override string GetErrorUrl(PaymentProviderContext<MollieOneTimeSettingsV2> ctx)
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.ErrorUrl.MustNotBeNull("settings.ErrorUrl");
@@ -77,7 +77,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             return ctx.Settings.ErrorUrl;
         }
 
-        public override string GetContinueUrl(PaymentProviderContext<MollieOneTimeSettings> ctx)
+        public override string GetContinueUrl(PaymentProviderContext<MollieOneTimeSettingsV2> ctx)
         {
             ctx.Settings.MustNotBeNull("settings");
             ctx.Settings.ContinueUrl.MustNotBeNull("settings.ContinueUrl");
@@ -85,7 +85,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             return ctx.Settings.ContinueUrl;
         }
 
-        public override async Task<PaymentFormResult> GenerateFormAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        public override async Task<PaymentFormResult> GenerateFormAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, CancellationToken cancellationToken = default)
         {
             // Validate settings
             ctx.Settings.MustNotBeNull("settings");
@@ -355,7 +355,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
         }
 
-        public override async Task<CallbackResult> ProcessCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
+        public override async Task<CallbackResult> ProcessCallbackAsync(PaymentProviderContext<MollieOneTimeSettingsV2> context, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(context);
 
@@ -369,7 +369,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             }
         }
 
-        private async Task<CallbackResult> ProcessRedirectCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        private async Task<CallbackResult> ProcessRedirectCallbackAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, CancellationToken cancellationToken = default)
         {
             var result = new CallbackResult();
 
@@ -412,7 +412,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             return result;
         }
 
-        private async Task<CallbackResult> ProcessWebhookCallbackAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        private async Task<CallbackResult> ProcessWebhookCallbackAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, CancellationToken cancellationToken = default)
         {
             IFormCollection formData = await ctx.HttpContext.Request.ReadFormAsync(cancellationToken);
             string? id = formData["id"];
@@ -454,7 +454,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 });
         }
 
-        public override async Task<ApiResult> FetchPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
+        public override async Task<ApiResult> FetchPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettingsV2> context, CancellationToken cancellationToken = default)
         {
             string molliePaymentId = await GetMolliePaymentIdAsync(context, cancellationToken);
             using var molliePaymentClient = new PaymentClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
@@ -470,7 +470,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
         }
 
-        public override async Task<ApiResult> CancelPaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        public override async Task<ApiResult> CancelPaymentAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, CancellationToken cancellationToken = default)
         {
             string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
             using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
@@ -489,7 +489,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         }
 
         public override async Task<ApiResult?> RefundPaymentAsync(
-            PaymentProviderContext<MollieOneTimeSettings> context,
+            PaymentProviderContext<MollieOneTimeSettingsV2> context,
             PaymentProviderOrderRefundRequest refundRequest,
             CancellationToken cancellationToken = default)
         {
@@ -530,7 +530,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         /// <exception cref="MolliePaymentProviderGeneralException">Throws when the mollie payment id could not be found.</exception>
-        private static async Task<string> GetMolliePaymentIdAsync(PaymentProviderContext<MollieOneTimeSettings> context, CancellationToken cancellationToken = default)
+        private static async Task<string> GetMolliePaymentIdAsync(PaymentProviderContext<MollieOneTimeSettingsV2> context, CancellationToken cancellationToken = default)
         {
             string? molliePaymentId = context.Order.Properties["molliePaymentId"]?.Value;
             if (!string.IsNullOrEmpty(molliePaymentId))
@@ -539,7 +539,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             }
 
             string mollieOrderId = context.Order.Properties["mollieOrderId"]?.Value
-                                ?? throw new MolliePaymentProviderGeneralException($"Mollie Order Id could not be found on the order number '{context.Order.OrderNumber}'.");
+                ?? throw new MolliePaymentProviderGeneralException($"Mollie Order Id could not be found on the order number '{context.Order.OrderNumber}'.");
             using var mollieOrderClient = new OrderClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
             OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true, cancellationToken: cancellationToken);
             molliePaymentId = (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id;
@@ -552,7 +552,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             throw new MolliePaymentProviderGeneralException($"Mollie Payment Id could not be found on the order number '{context.Order.OrderNumber}'.");
         }
 
-        public override async Task<ApiResult> CapturePaymentAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, CancellationToken cancellationToken = default)
+        public override async Task<ApiResult> CapturePaymentAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, CancellationToken cancellationToken = default)
         {
             string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
             using var mollieCaptureApi = new CaptureClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
@@ -574,7 +574,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
         }
 
-        private static async Task<Core.Models.PaymentStatus> GetPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettings> ctx, PaymentResponse molliePayment, CancellationToken cancellationToken = default)
+        private static async Task<Core.Models.PaymentStatus> GetPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, PaymentResponse molliePayment, CancellationToken cancellationToken = default)
         {
             if (molliePayment.AmountRefunded != null && molliePayment.AmountRefunded > 0)
             {

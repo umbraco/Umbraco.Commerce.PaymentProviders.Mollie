@@ -32,13 +32,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
     [Obsolete("Will be removed in v17. Use MollieOneTimePaymentProvider instead")]
     [PaymentProvider("mollie-onetime")]
-    public class MollieOneTimePaymentProviderObsolete : PaymentProviderBase<MollieOneTimeSettings>
+    public class MollieOneTimePaymentProvider : PaymentProviderBase<MollieOneTimeSettings>
     {
         private const string MolliePaymentFailed = "failed";
         private readonly IStoreService _storeService;
         private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
-        public MollieOneTimePaymentProviderObsolete(
+        public MollieOneTimePaymentProvider(
             UmbracoCommerceContext ctx,
             IStoreService storeService)
             : base(ctx)

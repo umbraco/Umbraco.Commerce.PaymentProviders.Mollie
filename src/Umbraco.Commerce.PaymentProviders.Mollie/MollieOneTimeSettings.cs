@@ -1,7 +1,9 @@
+using System;
 using Umbraco.Commerce.Core.PaymentProviders;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
+    [Obsolete("Will be removed in 17. Use MollieOneTimeSettings instead.")] // TODO: move properties to MollieOneTimeSettingsV2
     public class MollieOneTimeSettings
     {
         [PaymentProviderSetting(
@@ -39,13 +41,6 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         [PaymentProviderSetting(
             SortOrder = 1000)]
         public string LiveApiKey { get; set; }
-
-        /// <summary>
-        /// Indicates whether the payment should be captured manually.
-        /// </summary>
-        [PaymentProviderSetting(
-            SortOrder = 1100)]
-        public bool ManualCapture { get; set; }
 
         [PaymentProviderSetting(
             SortOrder = 10000)]
