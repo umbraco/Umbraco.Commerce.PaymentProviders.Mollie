@@ -15,7 +15,6 @@ using Mollie.Api.Models.Order.Response;
 using Mollie.Api.Models.Payment.Response.PaymentSpecificParameters;
 using Mollie.Api.Models.Refund.Response;
 using Mollie.Api.Models.Shipment.Request;
-using Umbraco.Commerce.Common.Logging;
 using Umbraco.Commerce.Core.Api;
 using Umbraco.Commerce.Core.Models;
 using Umbraco.Commerce.Core.PaymentProviders;
@@ -31,21 +30,19 @@ using MollieRefundRequest = Mollie.Api.Models.Refund.Request.RefundRequest;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
+    [Obsolete("Will be removed in v17. Use MollieOneTimePaymentProvider instead")]
     [PaymentProvider("mollie-onetime")]
     public class MollieOneTimePaymentProvider : PaymentProviderBase<MollieOneTimeSettings>
     {
         private const string MolliePaymentFailed = "failed";
-        private ILogger<MollieOneTimePaymentProvider> _logger;
         private readonly IStoreService _storeService;
         private const string MollieFailureReasonQueryParam = "mollieFailureReason";
 
         public MollieOneTimePaymentProvider(
             UmbracoCommerceContext ctx,
-            ILogger<MollieOneTimePaymentProvider> logger,
             IStoreService storeService)
             : base(ctx)
         {
-            _logger = logger;
             _storeService = storeService;
         }
 

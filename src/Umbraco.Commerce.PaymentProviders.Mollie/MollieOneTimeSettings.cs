@@ -1,7 +1,9 @@
+using System;
 using Umbraco.Commerce.Core.PaymentProviders;
 
 namespace Umbraco.Commerce.PaymentProviders.Mollie
 {
+    [Obsolete("Will be removed in 17. Use MollieOneTimeSettings instead.")] // TODO: move properties to MollieOneTimeSettingsV2
     public class MollieOneTimeSettings
     {
         [PaymentProviderSetting(
