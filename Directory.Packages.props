@@ -4,14 +4,14 @@
   </PropertyGroup>
   <ItemGroup>
     <GlobalPackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
-    <GlobalPackageReference Include="Nerdbank.GitVersioning" Version="3.8.118" />
+    <GlobalPackageReference Include="Nerdbank.GitVersioning" Version="3.9.50" />
     <GlobalPackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.556" />
     <GlobalPackageReference Include="Umbraco.Code" Version="2.4.0" />
     <GlobalPackageReference Include="Umbraco.GitVersioning.Extensions" Version="0.2.0" />
   </ItemGroup>
   <ItemGroup>
     <PackageVersion Include="Mollie.Api" Version="[4.14.0, 4.999.999)" />
-    <PackageVersion Include="Umbraco.Commerce.Core" Version="[17.0.0-rc1, 17.999.999)" />
-    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="[10.0.0-rc.2.25502.107, 10.999.999)" />
+    <PackageVersion Include="Umbraco.Commerce.Core" Version="[17.0.0-rc2, 17.999.999)" />
+    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="[10.0.0, 10.999.999)" />
   </ItemGroup>
 </Project>
