@@ -540,7 +540,9 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             string mollieOrderId = context.Order.Properties["mollieOrderId"]?.Value
                 ?? throw new MolliePaymentProviderGeneralException($"Mollie Order Id could not be found on the order number '{context.Order.OrderNumber}'.");
+#pragma warning disable CS0618 // Type or member is obsolete
             using var mollieOrderClient = new OrderClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
+#pragma warning restore CS0618 // Type or member is obsolete
             OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true, cancellationToken: cancellationToken);
             molliePaymentId = (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id;
 
