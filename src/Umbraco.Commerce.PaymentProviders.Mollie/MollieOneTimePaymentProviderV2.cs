@@ -175,6 +175,8 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             // Process order lines
             foreach (OrderLineReadOnly orderLine in ctx.Order.OrderLines)
             {
+                // Use WithoutAdjustments for TotalAmount and VatAmount so that TotalAmount = UnitPrice × Quantity
+                // which is what Mollie validates. The adjustment is handled as a separate discount line below.
                 var molliePaymentLine = new PaymentLine
                 {
                     Sku = orderLine.Sku,
@@ -182,8 +184,8 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     Quantity = (int)orderLine.Quantity,
                     UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
                     VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                    VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.Tax),
-                    TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.Value.WithTax),
+                    VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.Tax),
+                    TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.WithTax),
                     Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
                         ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
                         : MollieOrderLineType.Physical,
