@@ -175,29 +175,75 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             // Process order lines
             foreach (OrderLineReadOnly orderLine in ctx.Order.OrderLines)
             {
-                // Use WithoutAdjustments for TotalAmount and VatAmount so that TotalAmount = UnitPrice × Quantity
-                // which is what Mollie validates. The adjustment is handled as a separate discount line below.
-                var molliePaymentLine = new PaymentLine
+                if (orderLine.IsBundle(out BundleOrderLineReadOnly bundleOrderLine) && bundleOrderLine.OrderLines != null && bundleOrderLine.OrderLines.Any())
                 {
-                    Sku = orderLine.Sku,
-                    Description = orderLine.Name,
-                    Quantity = (int)orderLine.Quantity,
-                    UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
-                    VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                    VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.Tax),
-                    TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.WithTax),
-                    Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
-                        ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
-                        : MollieOrderLineType.Physical,
-                };
-
-                if (!string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductCategoryPropertyAlias))
-                {
-                    molliePaymentLine.Categories = orderLine.Properties[ctx.Settings.OrderLineProductCategoryPropertyAlias].Value.Split(',');
+                    // Bundle orderline validation
+                    // Split bundle: parent gets its own amounts, each sub-line becomes a separate Mollie line
+                    var subLineTotalWithTax = bundleOrderLine.OrderLines.Sum(sl => sl.TotalPrice.WithoutAdjustments.WithTax);
+                    var subLineTotalTax = bundleOrderLine.OrderLines.Sum(sl => sl.TotalPrice.WithoutAdjustments.Tax);
+            
+                    var parentOwnWithTax = orderLine.TotalPrice.WithoutAdjustments.WithTax - subLineTotalWithTax;
+                    var parentOwnTax = orderLine.TotalPrice.WithoutAdjustments.Tax - subLineTotalTax;
+            
+                    if (parentOwnWithTax > 0m)
+                    {
+                        molliePaymentLines.Add(new PaymentLine
+                        {
+                            Sku = orderLine.Sku,
+                            Description = orderLine.Name,
+                            Quantity = (int)orderLine.Quantity,
+                            UnitPrice = new MollieAmount(currency.Code, parentOwnWithTax),
+                            VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
+                            VatAmount = new MollieAmount(currency.Code, parentOwnTax),
+                            TotalAmount = new MollieAmount(currency.Code, parentOwnWithTax),
+                            Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
+                                ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
+                                : MollieOrderLineType.Physical,
+                        });
+                    }
+            
+                    foreach (var subLine in bundleOrderLine.OrderLines)
+                    {
+                        molliePaymentLines.Add(new PaymentLine
+                        {
+                            Sku = subLine.Sku ?? orderLine.Sku,
+                            Description = subLine.Name,
+                            Quantity = (int)subLine.Quantity,
+                            UnitPrice = new MollieAmount(currency.Code, subLine.UnitPrice.WithoutAdjustments.WithTax),
+                            VatRate = (subLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
+                            VatAmount = new MollieAmount(currency.Code, subLine.TotalPrice.WithoutAdjustments.Tax),
+                            TotalAmount = new MollieAmount(currency.Code, subLine.TotalPrice.WithoutAdjustments.WithTax),
+                            Type = MollieOrderLineType.Physical,
+                        });
+                    }
                 }
-
-                molliePaymentLines.Add(molliePaymentLine);
-
+                else
+                {
+                    // Non Bundle orderline validation
+                    // Use WithoutAdjustments for TotalAmount and VatAmount so that TotalAmount = UnitPrice × Quantity
+                    // which is what Mollie validates. The adjustment is handled as a separate discount line below.
+                    var molliePaymentLine = new PaymentLine
+                    {
+                        Sku = orderLine.Sku,
+                        Description = orderLine.Name,
+                        Quantity = (int)orderLine.Quantity,
+                        UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
+                        VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
+                        VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.Tax),
+                        TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.WithTax),
+                        Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
+                            ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
+                            : MollieOrderLineType.Physical,
+                    };
+    
+                    if (!string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductCategoryPropertyAlias))
+                    {
+                        molliePaymentLine.Categories = orderLine.Properties[ctx.Settings.OrderLineProductCategoryPropertyAlias].Value.Split(',');
+                    }
+    
+                    molliePaymentLines.Add(molliePaymentLine);
+                }
+            
                 // Because an order line can have sub order lines and various discounts and fees
                 // can apply, rather than adding each discount or fee to each order line, we
                 // add a single adjustment to the whole primary order line.
