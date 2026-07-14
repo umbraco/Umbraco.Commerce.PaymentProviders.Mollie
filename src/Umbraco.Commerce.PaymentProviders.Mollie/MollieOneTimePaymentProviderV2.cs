@@ -368,6 +368,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 Metadata = ctx.Order.GenerateOrderReference(),
                 BillingAddress = mollieOrderAddress,
                 RedirectUrl = ctx.Urls.CallbackUrl + "?redirect=true", // Explicitly redirect to the callback URL as this will need to do more processing to decide where to redirect to
+                CancelUrl = ctx.Urls.CancelUrl, // When the customer cancels, Mollie redirects straight to the store cancel page, avoiding a race with the webhook where a cancelled payment could show the confirmation page
                 WebhookUrl = ctx.Urls.CallbackUrl,
                 Locale = !string.IsNullOrWhiteSpace(ctx.Settings.Locale) ? ctx.Settings.Locale : MollieLocale.en_US,
                 CaptureMode = ctx.Settings.ManualCapture ? "manual" : null,
