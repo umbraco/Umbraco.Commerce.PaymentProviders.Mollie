@@ -110,8 +110,15 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             // Adjustments helper
             var processAdjustmentPrice = new Action<Price, List<PaymentLine>, string, int>((price, paymentLines, name, quantity) =>
             {
+                // Zero-value adjustments don't change the amount and Mollie doesn't need a line for them.
+                // Skipping also avoids dividing by zero below when both WithTax and WithoutTax are 0.
+                if (price.WithTax == 0m)
+                {
+                    return;
+                }
+
                 bool isDiscount = price.WithTax < 0;
-                decimal taxRate = (price.WithTax / price.WithoutTax) - 1;
+                decimal taxRate = price.WithoutTax == 0m ? 0m : (price.WithTax / price.WithoutTax) - 1;
 
                 paymentLines.Add(new PaymentLine
                 {
