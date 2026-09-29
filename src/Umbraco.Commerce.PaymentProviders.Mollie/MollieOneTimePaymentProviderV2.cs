@@ -613,14 +613,34 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         public override async Task<ApiResult> CapturePaymentAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, CancellationToken cancellationToken = default)
         {
             string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
+
+            // Capture no more than the order's current total. A post-finalized edit (e.g. removing
+            // an order line) can reduce the order below the original authorized amount, and Commerce
+            // itself only ever records the current total as captured (PaymentService.CaptureOrderPaymentAsync).
+            var captureAmount = Math.Min(ctx.Order.TransactionAmount.Value, ctx.Order.TransactionInfo.AmountAuthorized.Value);
+            CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(ctx.Order.CurrencyId);
+
             using var mollieCaptureApi = new CaptureClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
             await mollieCaptureApi.CreateCapture(
                 molliePaymentId,
-                new CaptureRequest(),
+                new CaptureRequest
+                {
+                    Amount = new MollieAmount(currency.Code, captureAmount),
+                },
                 cancellationToken);
 
             using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
             PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+
+            // Payment methods that support multiple partial captures (e.g. cards with multicapture
+            // enabled) leave the payment "authorized" with the remainder still open for a further
+            // capture. Commerce only ever calls CapturePaymentAsync once, so release what's left
+            // rather than leave an open authorization Commerce doesn't know about.
+            if (molliePayment.Status == MolliePaymentStatus.Authorized)
+            {
+                await molliePaymentClient.ReleasePaymentAuthorization(molliePaymentId, cancellationToken: cancellationToken);
+                molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            }
 
             return new ApiResult
             {
