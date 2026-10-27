@@ -652,7 +652,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
         }
 
-        private static Core.Models.PaymentStatus GetPaymentStatus(PaymentResponse molliePayment)
+        internal static Core.Models.PaymentStatus GetPaymentStatus(PaymentResponse molliePayment)
         {
             decimal amountRefunded = ParseMollieAmount(molliePayment.AmountRefunded);
             if (amountRefunded > 0)
@@ -681,7 +681,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             };
         }
 
-        private static decimal ParseMollieAmount(MollieAmount? amount)
+        internal static decimal ParseMollieAmount(MollieAmount? amount)
             => amount != null && !string.IsNullOrEmpty(amount.Value)
                 ? decimal.Parse(amount.Value, CultureInfo.InvariantCulture)
                 : 0m;

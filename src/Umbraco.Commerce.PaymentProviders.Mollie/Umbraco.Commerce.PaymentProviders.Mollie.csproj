@@ -14,4 +14,8 @@
         <PackageReference Include="Umbraco.Commerce.Core" />
     </ItemGroup>
 
+    <ItemGroup>
+        <InternalsVisibleTo Include="Umbraco.Commerce.PaymentProviders.Mollie.Tests" />
+    </ItemGroup>
+
 </Project>
