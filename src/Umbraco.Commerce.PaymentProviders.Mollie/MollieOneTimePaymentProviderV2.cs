@@ -434,7 +434,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             using (var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
                 PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, includeRemainderDetails: true, cancellationToken: cancellationToken);
-                Core.Models.PaymentStatus paymentStatus = await GetPaymentStatusAsync(ctx, molliePayment, cancellationToken);
+                Core.Models.PaymentStatus paymentStatus = GetPaymentStatus(molliePayment);
                 if (paymentStatus == Core.Models.PaymentStatus.Error)
                 {
                     // Mollie may redirect user here when the payment failed.
@@ -484,7 +484,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
             using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
             PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
-            Core.Models.PaymentStatus paymentStatus = await GetPaymentStatusAsync(ctx, molliePayment, cancellationToken);
+            Core.Models.PaymentStatus paymentStatus = GetPaymentStatus(molliePayment);
 
             _logger.Debug("ProcessWebhookCallbackAsync - molliePaymentId: {molliePaymentId}; molliePayment.Status: {molliePaymentStatus};", molliePaymentId, molliePayment.Status);
 
@@ -521,7 +521,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = context.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(context, molliePayment, cancellationToken),
+                    PaymentStatus = GetPaymentStatus(molliePayment),
                 },
             };
         }
@@ -539,7 +539,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(ctx, mollieOrder, cancellationToken),
+                    PaymentStatus = GetPaymentStatus(mollieOrder),
                 },
             };
         }
@@ -647,18 +647,27 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 TransactionInfo = new TransactionInfoUpdate()
                 {
                     TransactionId = ctx.Order.TransactionInfo.TransactionId,
-                    PaymentStatus = await GetPaymentStatusAsync(ctx, molliePayment, cancellationToken),
+                    PaymentStatus = GetPaymentStatus(molliePayment),
                 },
             };
         }
 
-        private static async Task<Core.Models.PaymentStatus> GetPaymentStatusAsync(PaymentProviderContext<MollieOneTimeSettingsV2> ctx, PaymentResponse molliePayment, CancellationToken cancellationToken = default)
+        private static Core.Models.PaymentStatus GetPaymentStatus(PaymentResponse molliePayment)
         {
-            if (molliePayment.AmountRefunded != null && molliePayment.AmountRefunded > 0)
+            decimal amountRefunded = ParseMollieAmount(molliePayment.AmountRefunded);
+            if (amountRefunded > 0)
             {
-                // The order is refunded if the total refunded amount is
-                // greater than or equal to the original amount of the order
-                return await ctx.Order.CalculateRefundableAmountAsync() <= molliePayment.AmountRefunded ?
+                // Compare Mollie's own figures: the order is fully refunded once the running
+                // total refunded reaches what was actually captured (or the payment amount
+                // when no captured amount is reported). Commerce's refundable amount can't be
+                // used here as it already has previous refunds deducted.
+                decimal amountPaid = ParseMollieAmount(molliePayment.AmountCaptured);
+                if (amountPaid <= 0)
+                {
+                    amountPaid = ParseMollieAmount(molliePayment.Amount);
+                }
+
+                return amountRefunded >= amountPaid ?
                         Core.Models.PaymentStatus.Refunded : Core.Models.PaymentStatus.PartiallyRefunded;
             }
 
@@ -671,5 +680,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 _ => Core.Models.PaymentStatus.PendingExternalSystem,
             };
         }
+
+        private static decimal ParseMollieAmount(MollieAmount? amount)
+            => amount != null && !string.IsNullOrEmpty(amount.Value)
+                ? decimal.Parse(amount.Value, CultureInfo.InvariantCulture)
+                : 0m;
     }
 }
