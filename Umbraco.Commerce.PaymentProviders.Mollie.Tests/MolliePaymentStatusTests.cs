@@ -10,7 +10,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie.Tests
 {
     public class MolliePaymentStatusTests
     {
-        private static Amount Eur(string value) => new("EUR", value);
+        private static Amount Eur(string value) => new("EUR", decimal.Parse(value, CultureInfo.InvariantCulture));
 
         private static PaymentResponse Payment(string? refunded, string? captured, string amount = "100.00", string status = MolliePaymentStatus.Paid)
             => new()
@@ -83,7 +83,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie.Tests
         public void ParseMollieAmount_Returns_Zero_For_Missing_Value()
         {
             Assert.That(MollieOneTimePaymentProviderV2.ParseMollieAmount(null), Is.EqualTo(0m));
-            Assert.That(MollieOneTimePaymentProviderV2.ParseMollieAmount(new Amount("EUR", string.Empty)), Is.EqualTo(0m));
+            Assert.That(MollieOneTimePaymentProviderV2.ParseMollieAmount(new Amount("EUR", 0m)), Is.EqualTo(0m));
         }
     }
 }
