@@ -5,7 +5,7 @@ VisualStudioVersion = 17.11.35327.3
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Umbraco.Commerce.PaymentProviders.Mollie", "src\Umbraco.Commerce.PaymentProviders.Mollie\Umbraco.Commerce.PaymentProviders.Mollie.csproj", "{1AC2CE83-B474-4776-BE0C-227FED386D5F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Umbraco.Commerce.PaymentProviders.Mollie.Tests", "Umbraco.Commerce.PaymentProviders.Mollie.Tests\Umbraco.Commerce.PaymentProviders.Mollie.Tests.csproj", "{76672DA4-A3E3-4DED-A8BE-2D626C85C5C5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Umbraco.Commerce.PaymentProviders.Mollie.Tests", "tests\Umbraco.Commerce.PaymentProviders.Mollie.Tests\Umbraco.Commerce.PaymentProviders.Mollie.Tests.csproj", "{76672DA4-A3E3-4DED-A8BE-2D626C85C5C5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

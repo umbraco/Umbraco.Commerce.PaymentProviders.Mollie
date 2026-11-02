@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -126,10 +125,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     Description = name,
                     Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
                     Quantity = quantity,
-                    UnitPrice = new MollieAmount(currency.Code, price.WithTax),
-                    VatRate = (taxRate * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                    VatAmount = new MollieAmount(currency.Code, price.Tax * quantity),
-                    TotalAmount = new MollieAmount(currency.Code, price.WithTax * quantity),
+                    UnitPrice = MollieAmounts.Create(currency.Code, price.WithTax),
+                    VatRate = MollieAmounts.ToVatRate(taxRate),
+                    VatAmount = MollieAmounts.Create(currency.Code, price.Tax * quantity),
+                    TotalAmount = MollieAmounts.Create(currency.Code, price.WithTax * quantity),
                 });
             });
 
@@ -199,10 +198,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                             Sku = orderLine.Sku,
                             Description = orderLine.Name,
                             Quantity = (int)orderLine.Quantity,
-                            UnitPrice = new MollieAmount(currency.Code, parentOwnWithTax),
-                            VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                            VatAmount = new MollieAmount(currency.Code, parentOwnTax),
-                            TotalAmount = new MollieAmount(currency.Code, parentOwnWithTax),
+                            UnitPrice = MollieAmounts.Create(currency.Code, parentOwnWithTax),
+                            VatRate = MollieAmounts.ToVatRate(orderLine.TaxRate.Value),
+                            VatAmount = MollieAmounts.Create(currency.Code, parentOwnTax),
+                            TotalAmount = MollieAmounts.Create(currency.Code, parentOwnWithTax),
                             Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
                                 ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
                                 : MollieOrderLineType.Physical,
@@ -216,10 +215,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                             Sku = subLine.Sku ?? orderLine.Sku,
                             Description = subLine.Name,
                             Quantity = (int)subLine.Quantity,
-                            UnitPrice = new MollieAmount(currency.Code, subLine.UnitPrice.WithoutAdjustments.WithTax),
-                            VatRate = (subLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                            VatAmount = new MollieAmount(currency.Code, subLine.TotalPrice.WithoutAdjustments.Tax),
-                            TotalAmount = new MollieAmount(currency.Code, subLine.TotalPrice.WithoutAdjustments.WithTax),
+                            UnitPrice = MollieAmounts.Create(currency.Code, subLine.UnitPrice.WithoutAdjustments.WithTax),
+                            VatRate = MollieAmounts.ToVatRate(subLine.TaxRate.Value),
+                            VatAmount = MollieAmounts.Create(currency.Code, subLine.TotalPrice.WithoutAdjustments.Tax),
+                            TotalAmount = MollieAmounts.Create(currency.Code, subLine.TotalPrice.WithoutAdjustments.WithTax),
                             Type = MollieOrderLineType.Physical,
                         });
                     }
@@ -234,10 +233,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Sku = orderLine.Sku,
                         Description = orderLine.Name,
                         Quantity = (int)orderLine.Quantity,
-                        UnitPrice = new MollieAmount(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
-                        VatRate = (orderLine.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                        VatAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.Tax),
-                        TotalAmount = new MollieAmount(currency.Code, orderLine.TotalPrice.WithoutAdjustments.WithTax),
+                        UnitPrice = MollieAmounts.Create(currency.Code, orderLine.UnitPrice.WithoutAdjustments.WithTax),
+                        VatRate = MollieAmounts.ToVatRate(orderLine.TaxRate.Value),
+                        VatAmount = MollieAmounts.Create(currency.Code, orderLine.TotalPrice.WithoutAdjustments.Tax),
+                        TotalAmount = MollieAmounts.Create(currency.Code, orderLine.TotalPrice.WithoutAdjustments.WithTax),
                         Type = !string.IsNullOrWhiteSpace(ctx.Settings.OrderLineProductTypePropertyAlias)
                             ? orderLine.Properties[ctx.Settings.OrderLineProductTypePropertyAlias]
                             : MollieOrderLineType.Physical,
@@ -280,10 +279,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     Description = name,
                     Type = MollieOrderLineType.Surcharge,
                     Quantity = 1,
-                    UnitPrice = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
-                    VatRate = (ctx.Order.PaymentInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                    VatAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.Tax),
-                    TotalAmount = new MollieAmount(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.WithTax),
+                    UnitPrice = MollieAmounts.Create(currency.Code, ctx.Order.PaymentInfo.TotalPrice.WithoutAdjustments.WithTax),
+                    VatRate = MollieAmounts.ToVatRate(ctx.Order.PaymentInfo.TaxRate.Value),
+                    VatAmount = MollieAmounts.Create(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.Tax),
+                    TotalAmount = MollieAmounts.Create(currency.Code, ctx.Order.PaymentInfo.TotalPrice.Value.WithTax),
                 };
 
                 molliePaymentLines.Add(paymentOrderLine);
@@ -305,10 +304,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     Description = name,
                     Type = MollieOrderLineType.ShippingFee,
                     Quantity = 1,
-                    UnitPrice = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
-                    VatRate = (ctx.Order.ShippingInfo.TaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture),
-                    VatAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
-                    TotalAmount = new MollieAmount(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax),
+                    UnitPrice = MollieAmounts.Create(currency.Code, ctx.Order.ShippingInfo.TotalPrice.WithoutAdjustments.WithTax),
+                    VatRate = MollieAmounts.ToVatRate(ctx.Order.ShippingInfo.TaxRate.Value),
+                    VatAmount = MollieAmounts.Create(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.Tax),
+                    TotalAmount = MollieAmounts.Create(currency.Code, ctx.Order.ShippingInfo.TotalPrice.Value.WithTax),
                 };
 
                 molliePaymentLines.Add(shippingOrderLine);
@@ -337,10 +336,10 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Description = "Gift Card - " + giftCard.GiftCardCode,
                         Type = MollieOrderLineType.GiftCard,
                         Quantity = 1,
-                        UnitPrice = new MollieAmount(currency.Code, giftCard.Amount.Value),
-                        VatRate = "0.00",
-                        VatAmount = new MollieAmount(currency.Code, 0m),
-                        TotalAmount = new MollieAmount(currency.Code, giftCard.Amount.Value),
+                        UnitPrice = MollieAmounts.Create(currency.Code, giftCard.Amount.Value),
+                        VatRate = MollieAmounts.ToVatRate(0m),
+                        VatAmount = MollieAmounts.Create(currency.Code, 0m),
+                        TotalAmount = MollieAmounts.Create(currency.Code, giftCard.Amount.Value),
                     });
                 }
             }
@@ -359,17 +358,17 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                         Description = "Transaction " + (isDiscount ? "Discount" : "Fee") + " - " + adjustment.Name,
                         Type = isDiscount ? MollieOrderLineType.Discount : MollieOrderLineType.Surcharge,
                         Quantity = 1,
-                        UnitPrice = new MollieAmount(currency.Code, adjustment.Amount.Value),
-                        VatRate = "0.00",
-                        VatAmount = new MollieAmount(currency.Code, 0m),
-                        TotalAmount = new MollieAmount(currency.Code, adjustment.Amount.Value),
+                        UnitPrice = MollieAmounts.Create(currency.Code, adjustment.Amount.Value),
+                        VatRate = MollieAmounts.ToVatRate(0m),
+                        VatAmount = MollieAmounts.Create(currency.Code, 0m),
+                        TotalAmount = MollieAmounts.Create(currency.Code, adjustment.Amount.Value),
                     });
                 }
             }
 
             var molliePaymentRequest = new PaymentRequest
             {
-                Amount = new MollieAmount(currency.Code.ToUpperInvariant(), ctx.Order.TransactionAmount.Value),
+                Amount = MollieAmounts.Create(currency.Code.ToUpperInvariant(), ctx.Order.TransactionAmount.Value),
                 Description = ctx.Order.OrderNumber,
                 Lines = molliePaymentLines,
                 Metadata = ctx.Order.GenerateOrderReference(),
@@ -398,7 +397,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                 }
             }
 
-            PaymentResponse molliePaymentResult = await molliePaymentClient.CreatePaymentAsync(molliePaymentRequest, false, cancellationToken);
+            PaymentResponse molliePaymentResult = (await molliePaymentClient.CreatePaymentAsync(molliePaymentRequest, false, cancellationToken)).EnsureSuccess();
             return new PaymentFormResult
             {
                 Form = new PaymentForm(molliePaymentResult.Links.Checkout!.Href, PaymentFormMethod.Get),
@@ -433,7 +432,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             _logger.Debug("ProcessRedirectCallbackAsync - molliePaymentId: {molliePaymentId}", molliePaymentId);
             using (var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey))
             {
-                PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, includeRemainderDetails: true, cancellationToken: cancellationToken);
+                PaymentResponse molliePayment = (await molliePaymentClient.GetPaymentAsync(molliePaymentId, includeRemainderDetails: true, cancellationToken: cancellationToken)).EnsureSuccess();
                 Core.Models.PaymentStatus paymentStatus = GetPaymentStatus(molliePayment);
                 if (paymentStatus == Core.Models.PaymentStatus.Error)
                 {
@@ -454,7 +453,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
                     {
                         result.TransactionInfo = new TransactionInfo
                         {
-                            AmountAuthorized = decimal.Parse(molliePayment.Amount.Value, CultureInfo.InvariantCulture),
+                            AmountAuthorized = molliePayment.Amount.Value,
                             TransactionFee = 0m,
                             TransactionId = molliePaymentId,
                             PaymentStatus = Core.Models.PaymentStatus.PendingExternalSystem,
@@ -483,7 +482,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 
 
             using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            PaymentResponse molliePayment = (await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
             Core.Models.PaymentStatus paymentStatus = GetPaymentStatus(molliePayment);
 
             _logger.Debug("ProcessWebhookCallbackAsync - molliePaymentId: {molliePaymentId}; molliePayment.Status: {molliePaymentStatus};", molliePaymentId, molliePayment.Status);
@@ -498,7 +497,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             return CallbackResult.Ok(
                 new TransactionInfo
                 {
-                    AmountAuthorized = decimal.Parse(molliePayment.Amount.Value, CultureInfo.InvariantCulture),
+                    AmountAuthorized = molliePayment.Amount.Value,
                     TransactionFee = 0m,
                     TransactionId = molliePaymentId,
                     PaymentStatus = paymentStatus,
@@ -514,7 +513,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             string molliePaymentId = await GetMolliePaymentIdAsync(context, cancellationToken);
             using var molliePaymentClient = new PaymentClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
-            PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            PaymentResponse molliePayment = (await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
 
             return new ApiResult
             {
@@ -530,9 +529,9 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         {
             string molliePaymentId = await GetMolliePaymentIdAsync(ctx, cancellationToken);
             using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            await molliePaymentClient.CancelPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            (await molliePaymentClient.CancelPaymentAsync(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
 
-            PaymentResponse mollieOrder = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            PaymentResponse mollieOrder = (await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
 
             return new ApiResult
             {
@@ -555,13 +554,13 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             string molliePaymentId = await GetMolliePaymentIdAsync(context, cancellationToken);
             CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(context.Order.CurrencyId);
             using var mollieRefundClient = new RefundClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
-            RefundResponse refundResponse = await mollieRefundClient.CreatePaymentRefundAsync(
+            RefundResponse refundResponse = (await mollieRefundClient.CreatePaymentRefundAsync(
                 molliePaymentId,
                 new MollieRefundRequest
                 {
-                    Amount = new MollieAmount(currency.Code, refundRequest.RefundAmount),
+                    Amount = MollieAmounts.Create(currency.Code, refundRequest.RefundAmount),
                 },
-                cancellationToken);
+                cancellationToken)).EnsureSuccess();
 
             if (refundResponse.Status == RefundStatus.Failed)
             {
@@ -599,7 +598,7 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
 #pragma warning disable CS0618 // Type or member is obsolete
             using var mollieOrderClient = new OrderClient(context.Settings.TestMode ? context.Settings.TestApiKey : context.Settings.LiveApiKey);
 #pragma warning restore CS0618 // Type or member is obsolete
-            OrderResponse mollieOrder = await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true, cancellationToken: cancellationToken);
+            OrderResponse mollieOrder = (await mollieOrderClient.GetOrderAsync(mollieOrderId, true, true, cancellationToken: cancellationToken)).EnsureSuccess();
             molliePaymentId = (mollieOrder.Embedded?.Payments ?? []).FirstOrDefault(x => x.Status == MolliePaymentStatus.Paid)?.Id;
 
             if (!string.IsNullOrEmpty(molliePaymentId))
@@ -621,16 +620,16 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             CurrencyReadOnly currency = await Context.Services.CurrencyService.GetCurrencyAsync(ctx.Order.CurrencyId);
 
             using var mollieCaptureApi = new CaptureClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            await mollieCaptureApi.CreateCapture(
+            (await mollieCaptureApi.CreateCapture(
                 molliePaymentId,
                 new CaptureRequest
                 {
-                    Amount = new MollieAmount(currency.Code, captureAmount),
+                    Amount = MollieAmounts.Create(currency.Code, captureAmount),
                 },
-                cancellationToken);
+                cancellationToken)).EnsureSuccess();
 
             using var molliePaymentClient = new PaymentClient(ctx.Settings.TestMode ? ctx.Settings.TestApiKey : ctx.Settings.LiveApiKey);
-            PaymentResponse molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+            PaymentResponse molliePayment = (await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
 
             // Payment methods that support multiple partial captures (e.g. cards with multicapture
             // enabled) leave the payment "authorized" with the remainder still open for a further
@@ -638,8 +637,8 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
             // rather than leave an open authorization Commerce doesn't know about.
             if (molliePayment.Status == MolliePaymentStatus.Authorized)
             {
-                await molliePaymentClient.ReleasePaymentAuthorization(molliePaymentId, cancellationToken: cancellationToken);
-                molliePayment = await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken);
+                (await molliePaymentClient.ReleasePaymentAuthorization(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
+                molliePayment = (await molliePaymentClient.GetPaymentAsync(molliePaymentId, cancellationToken: cancellationToken)).EnsureSuccess();
             }
 
             return new ApiResult
@@ -682,8 +681,6 @@ namespace Umbraco.Commerce.PaymentProviders.Mollie
         }
 
         internal static decimal ParseMollieAmount(MollieAmount? amount)
-            => amount != null && !string.IsNullOrEmpty(amount.Value)
-                ? decimal.Parse(amount.Value, CultureInfo.InvariantCulture)
-                : 0m;
+            => amount?.Value ?? 0m;
     }
 }
